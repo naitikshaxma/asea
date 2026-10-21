@@ -5,15 +5,16 @@ import { prisma } from '../src/services/prisma.js';
 import { processTaskJob } from '../src/worker.js';
 import type { TaskJobPayload } from '../src/services/queueService.js';
 
-// An in-memory task and run that the stubbed Prisma calls read and mutate, so
-// consecutive attempts see the state the previous attempt left behind.
-describe('Task worker retries (B3) and cancellation (B4)', () => {
+// An in-memory task and its runs that the stubbed Prisma calls read and mutate,
+// so consecutive attempts see the state the previous attempt left behind.
+describe('Task worker retries (B3), per-attempt runs and cancellation (B4)', () => {
   const taskId = 'task-w-01';
   const runId = 'run-w-01';
   const workspaceId = 'ws-w-01';
 
   let taskRow: Record<string, any>;
-  let runRow: Record<string, any>;
+  let runs: Map<string, Record<string, any>>;
+  let runRow: Record<string, any>; // the attempt-1 run created with the task
   let steps: Array<Record<string, any>>;
   let audits: Array<Record<string, any>>;
   let onStepCreated: (stepType: string) => void;
@@ -42,18 +43,33 @@ describe('Task worker retries (B3) and cancellation (B4)', () => {
       targetBranch: 'main',
     };
     runRow = { id: runId, taskId, attemptNumber: 1, status: 'QUEUED', errorSummary: null };
+    runs = new Map([[runId, runRow]]);
     steps = [];
     audits = [];
     onStepCreated = () => {};
 
-    const findTask = async () => ({ ...taskRow, runs: [{ ...runRow }] });
+    const findTask = async () => ({ ...taskRow, runs: [...runs.values()].map((r) => ({ ...r })) });
     vi.spyOn(prisma.task, 'findUnique').mockImplementation(findTask as any);
     vi.spyOn(prisma.task, 'findUniqueOrThrow').mockImplementation(findTask as any);
     vi.spyOn(prisma.task, 'update').mockImplementation((async ({ data }: any) =>
       Object.assign(taskRow, data)) as any);
-    vi.spyOn(prisma.workflowRun, 'findUnique').mockImplementation((async () => ({ ...runRow })) as any);
-    vi.spyOn(prisma.workflowRun, 'update').mockImplementation((async ({ data }: any) =>
-      Object.assign(runRow, data)) as any);
+    vi.spyOn(prisma.workflowRun, 'findUnique').mockImplementation((async ({ where }: any) => {
+      const run = runs.get(where.id);
+      return run ? { ...run } : null;
+    }) as any);
+    vi.spyOn(prisma.workflowRun, 'findFirst').mockImplementation((async ({ where }: any) => {
+      const run = [...runs.values()].find(
+        (r) => r.taskId === where.taskId && r.attemptNumber === where.attemptNumber
+      );
+      return run ? { ...run } : null;
+    }) as any);
+    vi.spyOn(prisma.workflowRun, 'create').mockImplementation((async ({ data }: any) => {
+      const run = { id: `run-w-attempt-${data.attemptNumber}`, errorSummary: null, ...data };
+      runs.set(run.id, run);
+      return { ...run };
+    }) as any);
+    vi.spyOn(prisma.workflowRun, 'update').mockImplementation((async ({ where, data }: any) =>
+      Object.assign(runs.get(where.id)!, data)) as any);
     vi.spyOn(prisma.workflowStep, 'create').mockImplementation((async ({ data }: any) => {
       steps.push(data);
       onStepCreated(data.stepType);
@@ -74,17 +90,43 @@ describe('Task worker retries (B3) and cancellation (B4)', () => {
       'Simulated worker fault'
     );
 
+    // The attempt's own run records the failure; the task is not terminal
     expect(taskRow.status).toBe('RUNNING');
-    expect(runRow.status).toBe('RUNNING');
-    expect(runRow.errorSummary).toMatch(/^Attempt 1 of 3 failed: Simulated worker fault/);
+    expect(runRow.status).toBe('FAILED');
+    expect(runRow.errorSummary).toBe('Simulated worker fault for test verification');
     expect(audits).toHaveLength(0);
 
     // BullMQ retries with the same job data; this time the work succeeds
     await processTaskJob(makeJob(1));
 
+    const retryRun = [...runs.values()].find((r) => r.attemptNumber === 2)!;
+    expect(runs.size).toBe(2);
+    expect(retryRun.status).toBe('COMPLETED');
+    expect(runRow.status).toBe('FAILED');
     expect(taskRow.status).toBe('COMPLETED');
-    expect(runRow.status).toBe('COMPLETED');
     expect(audits.map((a) => a.eventType)).toEqual(['TASK_COMPLETED']);
+
+    // Steps attach to their own attempt's run
+    const stepsByRun = (id: string) => steps.filter((s) => s.workflowRunId === id).map((s) => s.stepType);
+    expect(stepsByRun(runId)).toEqual(['VALIDATE_CONTEXT']);
+    expect(stepsByRun(retryRun.id)).toEqual([
+      'VALIDATE_CONTEXT',
+      'INSPECT_REPOSITORY',
+      'GENERATE_SPEC',
+      'VERIFY_BOUNDARIES',
+    ]);
+  });
+
+  it('reuses the attempt run when a stalled job is re-run without a new attempt number', async () => {
+    taskRow.status = 'RUNNING';
+    runRow.status = 'FAILED';
+    runs.set('run-w-2', { id: 'run-w-2', taskId, attemptNumber: 2, status: 'RUNNING', errorSummary: null });
+
+    await processTaskJob(makeJob(1));
+
+    expect(prisma.workflowRun.create).not.toHaveBeenCalled();
+    expect(runs.get('run-w-2')!.status).toBe('COMPLETED');
+    expect(steps.every((s) => s.workflowRunId === 'run-w-2')).toBe(true);
   });
 
   it('records the real worker identity and no fabricated verification results', async () => {
@@ -97,18 +139,20 @@ describe('Task worker retries (B3) and cancellation (B4)', () => {
     expect(boundaries?.resultMetadata.note).toMatch(/no boundary verification is implemented/);
   });
 
-  it('marks the task and run FAILED only on the final attempt', async () => {
+  it('marks the task FAILED only on the final attempt, in a run for that attempt', async () => {
     taskRow.status = 'RUNNING';
-    runRow.status = 'RUNNING';
+    runRow.status = 'FAILED';
 
     await expect(processTaskJob(makeJob(2, { simulatedFailure: true }))).rejects.toThrow(
       'Simulated worker fault'
     );
 
+    const finalRun = [...runs.values()].find((r) => r.attemptNumber === 3)!;
+    expect(finalRun.status).toBe('FAILED');
     expect(taskRow.status).toBe('FAILED');
     expect(taskRow.failureReason).toBe('Simulated worker fault for test verification');
-    expect(runRow.status).toBe('FAILED');
     expect(audits.map((a) => a.eventType)).toEqual(['TASK_FAILED']);
+    expect(audits[0].metadata.runId).toBe(finalRun.id);
   });
 
   it('stops between steps and cancels through the state machine when CANCEL_REQUESTED', async () => {
@@ -156,14 +200,15 @@ describe('Task worker retries (B3) and cancellation (B4)', () => {
     expect(runRow.errorSummary).toBe('Task cancelled by user after a failed attempt.');
   });
 
-  it('cancels a task picked up in CANCEL_REQUESTED after an earlier attempt left the run RUNNING', async () => {
+  it('cancels a retry picked up in CANCEL_REQUESTED without creating a run for it', async () => {
     taskRow.status = 'CANCEL_REQUESTED';
-    runRow.status = 'RUNNING';
+    runRow.status = 'FAILED';
 
     await processTaskJob(makeJob(1));
 
     expect(steps).toHaveLength(0);
+    expect(prisma.workflowRun.create).not.toHaveBeenCalled();
     expect(taskRow.status).toBe('CANCELLED');
-    expect(runRow.status).toBe('CANCELLED');
+    expect(runRow.status).toBe('FAILED'); // the earlier attempt's outcome is kept
   });
 });

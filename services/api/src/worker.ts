@@ -40,7 +40,8 @@ async function cancelTaskRun(taskId: string, runId: string, reason: string): Pro
   const finishedAt = new Date();
 
   const run = await prisma.workflowRun.findUnique({ where: { id: runId } });
-  if (run) {
+  // A run that already finished (e.g. an earlier attempt that FAILED) keeps its status
+  if (run && run.status !== 'FAILED' && run.status !== 'COMPLETED') {
     validateRunTransition(run.status, 'CANCELLED');
     await prisma.workflowRun.update({
       where: { id: runId },
@@ -78,11 +79,33 @@ async function honourCancellation(
   return status;
 }
 
+/**
+ * Each BullMQ attempt gets its own WorkflowRun. The first attempt uses the run
+ * created with the task; a retry finds or creates the run for its attempt
+ * number (a stalled job re-run keeps the same attempt number and run).
+ */
+async function resolveAttemptRun(job: Job<TaskJobPayload>): Promise<{ runId: string; attemptNumber: number }> {
+  const attemptNumber = job.data.attemptNumber + job.attemptsMade;
+  if (job.attemptsMade === 0) {
+    return { runId: job.data.runId, attemptNumber };
+  }
+
+  const existing = await prisma.workflowRun.findFirst({
+    where: { taskId: job.data.taskId, attemptNumber },
+  });
+  const run =
+    existing ??
+    (await prisma.workflowRun.create({
+      data: { taskId: job.data.taskId, attemptNumber, status: 'QUEUED' },
+    }));
+  return { runId: run.id, attemptNumber };
+}
+
 export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
-  const { taskId, runId, workspaceId, simulatedFailure } = job.data;
+  const { taskId, workspaceId, simulatedFailure } = job.data;
   const startedAt = new Date();
 
-  logger.info(`[Worker] Received job for task ${taskId} (Run ${runId})`, {
+  logger.info(`[Worker] Received job for task ${taskId}`, {
     jobId: job.id,
     attempt: job.attemptsMade + 1,
   });
@@ -100,9 +123,12 @@ export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
   // Check if task was cancelled before pickup
   if (task.status === 'CANCEL_REQUESTED' || task.status === 'CANCELLED') {
     logger.info(`[Worker] Task ${taskId} has been cancelled. Marking run cancelled.`);
-    await cancelTaskRun(taskId, runId, 'Task cancelled by user before execution commenced.');
+    await cancelTaskRun(taskId, job.data.runId, 'Task cancelled by user before execution commenced.');
     return;
   }
+
+  const { runId, attemptNumber } = await resolveAttemptRun(job);
+  logger.info(`[Worker] Task ${taskId} attempt ${attemptNumber} uses run ${runId}`);
 
   try {
     // Transition to RUNNING
@@ -281,27 +307,7 @@ export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
       return;
     }
 
-    // B3: FAILED is terminal, so only the final attempt may set it. Earlier
-    // attempts leave the task and run RUNNING and let BullMQ retry.
-    const attempt = job.attemptsMade + 1;
-    const maxAttempts = job.opts.attempts ?? 1;
-    if (attempt < maxAttempts) {
-      logger.warn(`[Worker] Task ${taskId} attempt ${attempt}/${maxAttempts} failed; retrying`, {
-        runId,
-        error: errorMsg,
-      });
-      await prisma.workflowRun.update({
-        where: { id: runId },
-        data: { errorSummary: `Attempt ${attempt} of ${maxAttempts} failed: ${errorMsg}` },
-      });
-      throw err;
-    }
-
-    logger.error(`[Worker] Task ${taskId} failed during processing`, {
-      runId,
-      error: errorMsg,
-    });
-
+    // This attempt's run records the failure, whether or not BullMQ retries
     await prisma.workflowRun.update({
       where: { id: runId },
       data: {
@@ -309,6 +315,23 @@ export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
         finishedAt,
         errorSummary: errorMsg,
       },
+    });
+
+    // B3: FAILED is terminal for the task, so only the final attempt sets it.
+    // Earlier attempts leave the task RUNNING; the retry gets a new run.
+    const attempt = job.attemptsMade + 1;
+    const maxAttempts = job.opts.attempts ?? 1;
+    if (attempt < maxAttempts) {
+      logger.warn(`[Worker] Task ${taskId} attempt ${attempt}/${maxAttempts} failed; retrying`, {
+        runId,
+        error: errorMsg,
+      });
+      throw err;
+    }
+
+    logger.error(`[Worker] Task ${taskId} failed during processing`, {
+      runId,
+      error: errorMsg,
     });
 
     await prisma.task.update({
