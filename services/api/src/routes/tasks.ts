@@ -395,107 +395,83 @@ tasksRouter.post('/tasks', async (req, res, next) => {
     let targetWorkspaceId = validated.workspaceId;
     let targetUserId = userId;
 
-    try {
-      if (!targetUserId) {
-        let defaultUser = await prisma.user.findFirst();
-        if (!defaultUser) {
-          defaultUser = await prisma.user.create({
-            data: {
-              email: 'developer@autonomous.local',
-              passwordHash: '$2a$10$placeholder',
-              displayName: 'Default Developer',
-            },
-          });
-        }
-        targetUserId = defaultUser.id;
+    if (!targetUserId) {
+      let defaultUser = await prisma.user.findFirst();
+      if (!defaultUser) {
+        defaultUser = await prisma.user.create({
+          data: {
+            email: 'developer@autonomous.local',
+            passwordHash: '$2a$10$placeholder',
+            displayName: 'Default Developer',
+          },
+        });
       }
+      targetUserId = defaultUser.id;
+    }
 
-      if (!targetWorkspaceId) {
-        let ws = await prisma.workspace.findFirst({ where: { ownerId: targetUserId } });
-        if (!ws) {
-          ws = await prisma.workspace.create({
-            data: {
-              name: 'Default Workspace',
-              ownerId: targetUserId,
-            },
-          });
-          await prisma.workspaceMembership.create({
-            data: { workspaceId: ws.id, userId: targetUserId, role: 'OWNER' },
-          });
-        }
-        targetWorkspaceId = ws.id;
+    if (!targetWorkspaceId) {
+      let ws = await prisma.workspace.findFirst({ where: { ownerId: targetUserId } });
+      if (!ws) {
+        ws = await prisma.workspace.create({
+          data: {
+            name: 'Default Workspace',
+            ownerId: targetUserId,
+          },
+        });
+        await prisma.workspaceMembership.create({
+          data: { workspaceId: ws.id, userId: targetUserId, role: 'OWNER' },
+        });
       }
+      targetWorkspaceId = ws.id;
+    }
 
-      const task = await prisma.$transaction(async (tx) => {
-        const t = await tx.task.create({
-          data: {
-            workspaceId: targetWorkspaceId!,
-            creatorId: targetUserId!,
-            title: validated.title,
-            description: validated.description,
-            taskType: validated.taskType,
-            priority: validated.priority,
-            status: 'QUEUED',
-            repositoryUrl: validated.repositoryUrl,
-            targetBranch: validated.targetBranch,
-            executionMetadata: {
-              phase: 'PHASE_2_PERSISTED',
-              note: 'Task accepted into intake queue. Persisted in PostgreSQL.',
-            },
+    const task = await prisma.$transaction(async (tx) => {
+      const t = await tx.task.create({
+        data: {
+          workspaceId: targetWorkspaceId!,
+          creatorId: targetUserId!,
+          title: validated.title,
+          description: validated.description,
+          taskType: validated.taskType,
+          priority: validated.priority,
+          status: 'QUEUED',
+          repositoryUrl: validated.repositoryUrl,
+          targetBranch: validated.targetBranch,
+          executionMetadata: {
+            phase: 'PHASE_2_PERSISTED',
+            note: 'Task accepted into intake queue. Persisted in PostgreSQL.',
           },
-        });
-
-        const run = await tx.workflowRun.create({
-          data: {
-            taskId: t.id,
-            attemptNumber: 1,
-            status: 'QUEUED',
-          },
-        });
-
-        await tx.outboxEvent.create({
-          data: {
-            aggregateType: 'Task',
-            aggregateId: t.id,
-            eventType: 'TASK_ENQUEUED',
-            payload: {
-              taskId: t.id,
-              workspaceId: targetWorkspaceId!,
-              attemptNumber: 1,
-              runId: run.id,
-            },
-            status: 'PENDING',
-          },
-        });
-
-        return { ...t, runs: [run] };
+        },
       });
 
-      dispatchPendingOutboxEvents().catch(() => {});
-      res.status(201).json(formatTaskResponse(task));
-    } catch {
-      // In-memory fallback if database is offline during unit testing
-      const now = new Date().toISOString();
-      const mockTask: TaskResponse = {
-        id: `task-${Date.now()}`,
-        title: validated.title,
-        description: validated.description,
-        taskType: validated.taskType,
-        priority: validated.priority,
-        status: 'PENDING',
-        repositoryUrl: validated.repositoryUrl,
-        targetBranch: validated.targetBranch,
-        createdAt: now,
-        updatedAt: now,
-        executionMetadata: {
-          workerId: 'worker-unassigned',
-          sandboxType: 'disposable-container',
-          phase: 'INTAKE_PHASE_1',
-          note: 'Task accepted into intake queue. Automated agent execution pipeline is scheduled for Phase 2.',
+      const run = await tx.workflowRun.create({
+        data: {
+          taskId: t.id,
+          attemptNumber: 1,
+          status: 'QUEUED',
         },
-      };
-      res.status(201).json(mockTask);
-    }
+      });
+
+      await tx.outboxEvent.create({
+        data: {
+          aggregateType: 'Task',
+          aggregateId: t.id,
+          eventType: 'TASK_ENQUEUED',
+          payload: {
+            taskId: t.id,
+            workspaceId: targetWorkspaceId!,
+            attemptNumber: 1,
+            runId: run.id,
+          },
+          status: 'PENDING',
+        },
+      });
+
+      return { ...t, runs: [run] };
+    });
+
+    dispatchPendingOutboxEvents().catch(() => {});
+    res.status(201).json(formatTaskResponse(task));
   } catch (err) {
     next(err);
   }
