@@ -6,7 +6,7 @@ changed files); nothing is read from the repository or a database.
 
 import logging
 import time
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from app.verification.ast_checks import finding_id, is_test_file, run_ast_checks
@@ -79,7 +79,8 @@ def run_static_analysis(
     *,
     auth_decorators: set[str],
     semgrep_command: str,
-    semgrep_config: str,
+    semgrep_ruleset: Path,
+    semgrep_rules_lock: Path,
     semgrep_timeout_seconds: int,
 ) -> StaticAnalysisResult:
     started = time.perf_counter()
@@ -101,10 +102,12 @@ def run_static_analysis(
 
     tools_run = [AST_TOOL]
     tools_unavailable: list[str] = []
+    ruleset_sha256: str | None = None
     if python_files:
-        outcome = run_semgrep(python_files, semgrep_command, semgrep_config, semgrep_timeout_seconds)
+        outcome = run_semgrep(python_files, semgrep_command, semgrep_ruleset, semgrep_rules_lock, semgrep_timeout_seconds)
         if outcome.available:
             tools_run.append(SEMGREP_TOOL)
+            ruleset_sha256 = outcome.ruleset_sha256
             findings = _merge(findings, _semgrep_findings(outcome.results, changes))
         else:
             logger.info("Semgrep unavailable: %s", outcome.reason)
@@ -116,4 +119,5 @@ def run_static_analysis(
         tools_run=tools_run,
         tools_unavailable=tools_unavailable,
         duration_ms=int((time.perf_counter() - started) * 1000),
+        semgrep_ruleset_sha256=ruleset_sha256,
     )

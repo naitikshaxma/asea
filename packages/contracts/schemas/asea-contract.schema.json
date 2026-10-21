@@ -245,13 +245,20 @@
       "duration_ms": {
         "type": "integer",
         "minimum": 0
+      },
+      "semgrep_ruleset_sha256": {
+        "type": [
+          "string",
+          "null"
+        ]
       }
     },
     "required": [
       "findings",
       "tools_run",
       "tools_unavailable",
-      "duration_ms"
+      "duration_ms",
+      "semgrep_ruleset_sha256"
     ],
     "additionalProperties": false,
     "$schema": "http://json-schema.org/draft-07/schema#"

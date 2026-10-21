@@ -45,9 +45,10 @@ const engineResult: StaticAnalysisResult = {
       remediation: 'Add a test.',
     },
   ],
-  tools_run: ['python-ast'],
-  tools_unavailable: ['semgrep'],
+  tools_run: ['python-ast', 'semgrep'],
+  tools_unavailable: [],
   duration_ms: 12,
+  semgrep_ruleset_sha256: 'c7b5'.padEnd(64, '0'),
 };
 
 const builtRequest: VerificationRequest = {
@@ -194,9 +195,14 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
       verificationRunId: 'vr-1',
       findingCount: 2,
       findingsBySeverity: { high: 1, medium: 1 },
-      toolsRun: ['python-ast'],
-      toolsUnavailable: ['semgrep'],
+      toolsRun: ['python-ast', 'semgrep'],
+      toolsUnavailable: [],
+      semgrepRulesetSha256: 'c7b5'.padEnd(64, '0'),
     });
+    // The ruleset hash is also in the audit chain
+    expect(chain().find((a) => a.eventType === 'STATIC_ANALYSIS_COMPLETED')!.metadata.semgrepRulesetSha256).toBe(
+      'c7b5'.padEnd(64, '0')
+    );
 
     expect(findings).toEqual([
       expect.objectContaining({ verificationRunId: 'vr-1', findingId: 'f-route', category: 'STATIC', severity: 'HIGH', source: 'DETERMINISTIC', ruleId: 'ASEA-PY-ROUTE-NO-AUTH', line: 25 }),

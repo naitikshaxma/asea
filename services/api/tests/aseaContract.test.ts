@@ -54,7 +54,7 @@ describe('ASEA verification contract (Zod side)', () => {
       remediation: 'Avoid eval.',
     };
     expect(
-      StaticAnalysisResultSchema.parse({ findings: [finding], tools_run: ['python-ast'], tools_unavailable: [], duration_ms: 4 })
+      StaticAnalysisResultSchema.parse({ findings: [finding], tools_run: ['python-ast'], tools_unavailable: [], duration_ms: 4, semgrep_ruleset_sha256: null })
     ).toBeTruthy();
     expect(() => FindingSchema.parse({ ...finding, line: 0 })).toThrow();
     expect(() => FindingSchema.parse({ ...finding, category: 'style' })).toThrow();

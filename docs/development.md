@@ -115,7 +115,7 @@ npm run test:api
 # Run Web test suite individually
 npm run test:web
 
-# Run Python Pytest tests (60 agent tests)
+# Run Python Pytest tests (68 agent tests)
 npm run test:python
 
 # Run Everything (74 total tests)

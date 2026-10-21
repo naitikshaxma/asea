@@ -82,19 +82,29 @@ Requests with an unparseable diff, an absolute or `..` path, or a changed
 |---|---|---|
 | `ASEA_AUTH_DECORATORS` | `login_required` | Comma-separated decorator names that count as authentication |
 | `SEMGREP_COMMAND` | `semgrep` | Command prefix used to run Semgrep; `{workdir}` is replaced by the temporary directory holding the changed files |
-| `SEMGREP_CONFIG` | `p/python` | Semgrep ruleset (fetched from the Semgrep registry, so it needs network access) |
+| `SEMGREP_RULESET` | `rules/semgrep/p-python.json` | Pinned ruleset, downloaded by `npm run semgrep:rules` (see [rules/semgrep/README.md](rules/semgrep/README.md)) |
+| `SEMGREP_RULES_LOCK` | `rules/semgrep/p-python.lock.json` | Lock holding the ruleset's expected sha256 |
 | `SEMGREP_TIMEOUT_SECONDS` | `120` | Timeout for the whole Semgrep run |
 
 ### Semgrep (optional)
 
-Semgrep runs on the changed `.py` files only: they are written to a temporary
-directory and scanned with `semgrep scan --config $SEMGREP_CONFIG --json
---metrics off`, called as an argument list (never through a shell) with a
-timeout. Its results are limited to the changed lines, and a result on a file
-and line the ast checks already reported is folded into that finding's
-evidence. If the command is not found, times out, fails or prints something
-other than JSON, the response lists `semgrep` in `tools_unavailable` and the ast
-findings are still returned.
+Semgrep runs offline with a pinned ruleset: the 151 rules of the registry pack
+`p/python` at a fixed semgrep-rules commit, downloaded once by
+`npm run semgrep:rules` (the rules are licensed for internal use only and are
+not committed; see [rules/semgrep/README.md](rules/semgrep/README.md)). Before
+each scan the service checks the file's sha256 against the lock; a missing or
+different file means Semgrep is skipped.
+
+The changed `.py` files and a copy of the ruleset are written to a temporary
+directory, and `semgrep scan --config <ruleset> --json --metrics off ./<file>...`
+is called as an argument list (never through a shell) with a timeout. No
+registry config is passed, so Semgrep needs no network access. Its results are
+limited to the changed lines, and a result on a file and line the ast checks
+already reported is folded into that finding's evidence. When Semgrep ran,
+`semgrep_ruleset_sha256` in the result is the ruleset's sha256 (otherwise
+null). If the command is not found, the ruleset is missing or does not match,
+or Semgrep times out, fails or prints something other than JSON, the response
+lists `semgrep` in `tools_unavailable` and the ast findings are still returned.
 
 Semgrep does not install natively on Windows. Two ways to use it there:
 
@@ -102,15 +112,16 @@ Semgrep does not install natively on Windows. Two ways to use it there:
   `python3 -m pip install --user semgrep` (or `pipx install semgrep`), and set
   `SEMGREP_COMMAND="wsl semgrep"`. WSL maps the Windows working directory, so the
   temporary directory is visible to Semgrep.
-- **Docker** (pin a version):
+- **Docker** (pin a version; `--network none` guarantees it stays offline):
   ```
-  SEMGREP_COMMAND="docker run --rm -v {workdir}:/src -w /src semgrep/semgrep:1.181.0 semgrep"
+  SEMGREP_COMMAND="docker run --rm --network none -v {workdir}:/src -w /src semgrep/semgrep:1.181.0 semgrep"
   ```
 
 On Linux/macOS, `python3 -m pip install semgrep` and the default
 `SEMGREP_COMMAND=semgrep` are enough. The Docker form was checked with
-`semgrep/semgrep:1.181.0` against the fixtures in `tests/fixtures/`; the
-automated tests fake the Semgrep process and do not need it installed.
+`semgrep/semgrep:1.181.0` and `--network none` against the fixtures in
+`tests/fixtures/`; the automated tests fake the Semgrep process and do not need
+it installed.
 
 ## Phase 2 Roadmap
 - Integrated AST code graph indexing.

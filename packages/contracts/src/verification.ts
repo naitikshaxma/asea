@@ -54,5 +54,7 @@ export const StaticAnalysisResultSchema = z.object({
   tools_run: z.array(z.string()),
   tools_unavailable: z.array(z.string()),
   duration_ms: z.number().int().min(0),
+  // sha256 of the pinned Semgrep ruleset Semgrep ran with; null when it did not run
+  semgrep_ruleset_sha256: z.string().nullable(),
 });
 export type StaticAnalysisResult = z.infer<typeof StaticAnalysisResultSchema>;

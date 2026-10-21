@@ -26,6 +26,7 @@
     "test:api": "npm run test --workspace=@autonomous-engineer/api",
     "test:web": "npm run test --workspace=@autonomous-engineer/web",
     "test:python": "node scripts/run-python-tests.js",
+    "semgrep:rules": "node scripts/run-python.js services/agent-service/scripts/fetch_semgrep_rules.py",
     "test:all": "npm run test && npm run test:python",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run typecheck",

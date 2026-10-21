@@ -48,3 +48,5 @@ class StaticAnalysisResult(BaseModel):
     tools_run: list[str]
     tools_unavailable: list[str]
     duration_ms: int = Field(ge=0)
+    # sha256 of the pinned Semgrep ruleset Semgrep ran with; null when it did not run
+    semgrep_ruleset_sha256: str | None

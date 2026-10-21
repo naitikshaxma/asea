@@ -1,4 +1,5 @@
 import difflib
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -8,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.verification import semgrep_runner
-from app.verification.semgrep_runner import build_command
+from app.verification.semgrep_runner import RULESET_NAME, build_command
 from tests.fixture_support import CASES, load_case
 
 ENDPOINT = "/api/v1/verify/static"
@@ -265,6 +266,20 @@ def test_malformed_diff_is_rejected(client: TestClient):
 
 # --- Semgrep -------------------------------------------------------------------
 
+PINNED_RULESET = b'{"rules":[{"id":"python.test.rule","languages":["python"],"message":"m","pattern":"eval(...)","severity":"ERROR"}]}\n'
+PINNED_SHA256 = hashlib.sha256(PINNED_RULESET).hexdigest()
+
+
+@pytest.fixture
+def pinned_ruleset(tmp_path, monkeypatch):
+    """A downloaded ruleset whose sha256 matches its lock."""
+    ruleset, lock = tmp_path / "p-python.json", tmp_path / "p-python.lock.json"
+    ruleset.write_bytes(PINNED_RULESET)
+    lock.write_text(json.dumps({"sha256": PINNED_SHA256}), encoding="utf-8")
+    monkeypatch.setattr(settings, "SEMGREP_RULESET", ruleset)
+    monkeypatch.setattr(settings, "SEMGREP_RULES_LOCK", lock)
+    return ruleset
+
 
 def fake_semgrep(monkeypatch, results=None, returncode=0, stdout=None, raises=None):
     calls = []
@@ -275,7 +290,7 @@ def fake_semgrep(monkeypatch, results=None, returncode=0, stdout=None, raises=No
             {
                 "command": command,
                 "kwargs": kwargs,
-                "files": {p.relative_to(workdir).as_posix(): p.read_text() for p in workdir.rglob("*") if p.is_file()},
+                "files": {p.relative_to(workdir).as_posix(): p.read_bytes() for p in workdir.rglob("*") if p.is_file()},
             }
         )
         if raises:
@@ -298,7 +313,9 @@ def semgrep_result(path: str, line: int, check_id: str, severity: str = "ERROR")
     }
 
 
-def test_semgrep_runs_on_changed_files_only_as_an_argument_list(client: TestClient, monkeypatch):
+def test_semgrep_runs_offline_on_the_pinned_ruleset_and_changed_files_only(
+    client: TestClient, monkeypatch, pinned_ruleset
+):
     calls = fake_semgrep(monkeypatch)
     body = new_files({"pkg/a.py": "x = 1\n", "notes.md": "text\n"})
     body["changed_files"].append({"path": "unchanged.py", "head_content": "y = 2\n"})
@@ -307,17 +324,49 @@ def test_semgrep_runs_on_changed_files_only_as_an_argument_list(client: TestClie
 
     assert result["tools_run"] == ["python-ast", "semgrep"]
     assert result["tools_unavailable"] == []
+    assert result["semgrep_ruleset_sha256"] == PINNED_SHA256
     [call] = calls
-    assert call["files"] == {"pkg/a.py": "x = 1\n"}
-    assert isinstance(call["command"], list)
-    assert call["command"][:2] == ["semgrep", "scan"]
-    assert ["--config", "p/python"] == call["command"][2:4]
-    assert "--json" in call["command"]
+    # The scan directory holds the changed Python file and a copy of the pinned ruleset
+    assert call["files"] == {"pkg/a.py": b"x = 1\n", RULESET_NAME: PINNED_RULESET}
+    command = call["command"]
+    assert isinstance(command, list)
+    assert command[:4] == ["semgrep", "scan", "--config", RULESET_NAME]
+    assert not any(arg.startswith(("p/", "r/", "http")) or arg == "auto" for arg in command)
+    assert command[-1] == "./pkg/a.py"
+    assert "--json" in command and ["--metrics", "off"] == command[command.index("--metrics"):][:2]
     assert call["kwargs"]["timeout"] == settings.SEMGREP_TIMEOUT_SECONDS
     assert call["kwargs"].get("shell", False) is False
 
 
-def test_semgrep_findings_are_deduplicated_and_limited_to_changed_lines(client: TestClient, monkeypatch):
+def test_semgrep_is_skipped_when_the_ruleset_is_missing(client: TestClient, monkeypatch, pinned_ruleset):
+    calls = fake_semgrep(monkeypatch)
+    pinned_ruleset.unlink()
+
+    result = client.post(ENDPOINT, json=new_files({"a.py": "eval(x)\n"})).json()
+
+    assert calls == []
+    assert result["tools_unavailable"] == ["semgrep"]
+    assert result["semgrep_ruleset_sha256"] is None
+    assert [f["rule_id"] for f in result["findings"]] == ["ASEA-PY-EVAL-EXEC"]
+
+
+def test_semgrep_refuses_a_ruleset_that_does_not_match_the_pin(client: TestClient, monkeypatch, pinned_ruleset):
+    calls = fake_semgrep(monkeypatch)
+    pinned_ruleset.write_bytes(PINNED_RULESET.replace(b"eval", b"exec"))
+
+    result = client.post(ENDPOINT, json=new_files({"a.py": "eval(x)\n"})).json()
+
+    assert calls == []
+    assert result["tools_unavailable"] == ["semgrep"]
+    assert result["semgrep_ruleset_sha256"] is None
+
+    outcome = semgrep_runner.run_semgrep({"a.py": "x\n"}, "semgrep", pinned_ruleset, settings.SEMGREP_RULES_LOCK, 5)
+    assert outcome.available is False and "does not match the pinned" in outcome.reason
+
+
+def test_semgrep_findings_are_deduplicated_and_limited_to_changed_lines(
+    client: TestClient, monkeypatch, pinned_ruleset
+):
     fake_semgrep(
         monkeypatch,
         results=[
@@ -338,8 +387,8 @@ def test_semgrep_findings_are_deduplicated_and_limited_to_changed_lines(client: 
     ]
 
 
-def test_semgrep_only_findings_are_mapped_to_the_contract(client: TestClient, monkeypatch):
-    fake_semgrep(monkeypatch, results=[semgrep_result("a.py", 1, "python.flask.debug-enabled", "WARNING")])
+def test_semgrep_only_findings_are_mapped_to_the_contract(client: TestClient, monkeypatch, pinned_ruleset):
+    fake_semgrep(monkeypatch, results=[semgrep_result("./a.py", 1, "python.flask.debug-enabled", "WARNING")])
     [finding] = findings(client, new_files({"a.py": "app.run(debug=True)\n"}))
     assert finding["rule_id"] == "python.flask.debug-enabled"
     assert (finding["category"], finding["severity"], finding["source"]) == ("static", "medium", "deterministic")
@@ -355,18 +404,23 @@ def test_semgrep_only_findings_are_mapped_to_the_contract(client: TestClient, mo
     ],
     ids=["timeout", "error-exit", "bad-output"],
 )
-def test_semgrep_failure_is_recorded_and_ast_checks_still_run(client: TestClient, monkeypatch, kwargs):
+def test_semgrep_failure_is_recorded_and_ast_checks_still_run(client: TestClient, monkeypatch, pinned_ruleset, kwargs):
     fake_semgrep(monkeypatch, **kwargs)
     result = client.post(ENDPOINT, json=new_files({"a.py": "eval(x)\n"})).json()
     assert result["tools_run"] == ["python-ast"]
     assert result["tools_unavailable"] == ["semgrep"]
+    assert result["semgrep_ruleset_sha256"] is None
     assert [f["rule_id"] for f in result["findings"]] == ["ASEA-PY-EVAL-EXEC"]
 
 
 def test_semgrep_command_prefix_supports_wsl_and_docker():
-    assert build_command("wsl semgrep", "/tmp/w", "p/python")[:3] == ["wsl", "semgrep", "scan"]
+    assert build_command("wsl semgrep", "/tmp/w", ["a.py"])[:3] == ["wsl", "semgrep", "scan"]
     docker = build_command(
-        "docker run --rm -v {workdir}:/src -w /src semgrep/semgrep:1.100.0 semgrep", "/tmp/w", "p/python"
+        "docker run --rm --network none -v {workdir}:/src -w /src semgrep/semgrep:1.181.0 semgrep", "/tmp/w", ["a.py"]
     )
-    assert docker[:8] == ["docker", "run", "--rm", "-v", "/tmp/w:/src", "-w", "/src", "semgrep/semgrep:1.100.0"]
-    assert docker[8:10] == ["semgrep", "scan"]
+    assert docker[:10] == [
+        "docker", "run", "--rm", "--network", "none", "-v", "/tmp/w:/src", "-w", "/src", "semgrep/semgrep:1.181.0"
+    ]
+    assert docker[10:14] == ["semgrep", "scan", "--config", RULESET_NAME]
+    # A file name starting with "-" stays a path
+    assert build_command("semgrep", "/tmp/w", ["-rf.py"])[-1] == "./-rf.py"

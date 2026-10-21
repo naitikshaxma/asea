@@ -18,7 +18,8 @@ def verify_static(body: VerificationRequest, request: Request):
             body,
             auth_decorators={d.strip() for d in settings.ASEA_AUTH_DECORATORS.split(",") if d.strip()},
             semgrep_command=settings.SEMGREP_COMMAND,
-            semgrep_config=settings.SEMGREP_CONFIG,
+            semgrep_ruleset=settings.SEMGREP_RULESET,
+            semgrep_rules_lock=settings.SEMGREP_RULES_LOCK,
             semgrep_timeout_seconds=settings.SEMGREP_TIMEOUT_SECONDS,
         )
     except InvalidVerificationInput as exc:

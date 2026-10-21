@@ -1,5 +1,9 @@
+from pathlib import Path
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+_RULES_DIR = Path(__file__).resolve().parents[1] / "rules" / "semgrep"
 
 
 class Settings(BaseSettings):
@@ -27,7 +31,10 @@ class Settings(BaseSettings):
     # Command prefix for Semgrep, e.g. "semgrep", "wsl semgrep" or a
     # "docker run ... -v {workdir}:/src -w /src semgrep/semgrep:<tag> semgrep" line
     SEMGREP_COMMAND: str = "semgrep"
-    SEMGREP_CONFIG: str = "p/python"
+    # Pinned ruleset (downloaded by scripts/fetch_semgrep_rules.py) and the lock
+    # holding its expected sha256; Semgrep is not run if they disagree
+    SEMGREP_RULESET: Path = _RULES_DIR / "p-python.json"
+    SEMGREP_RULES_LOCK: Path = _RULES_DIR / "p-python.lock.json"
     SEMGREP_TIMEOUT_SECONDS: int = 120
 
     model_config = SettingsConfigDict(

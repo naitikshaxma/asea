@@ -31,6 +31,7 @@ const result = {
   tools_run: ['python-ast'],
   tools_unavailable: ['semgrep'],
   duration_ms: 3,
+  semgrep_ruleset_sha256: null,
 };
 
 describe('agent service client', () => {

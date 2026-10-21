@@ -133,6 +133,7 @@ function summarize(result: StaticAnalysisResult) {
     toolsRun: result.tools_run,
     toolsUnavailable: result.tools_unavailable,
     durationMs: result.duration_ms,
+    semgrepRulesetSha256: result.semgrep_ruleset_sha256,
   };
 }
 
