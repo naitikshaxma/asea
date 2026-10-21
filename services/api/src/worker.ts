@@ -1,5 +1,6 @@
 import { Worker, type Job } from 'bullmq';
 import { Redis } from 'ioredis';
+import type { TaskStatus } from '@prisma/client';
 import { TASK_QUEUE_NAME, type TaskJobPayload } from './services/queueService.js';
 import { prisma, disconnectPrisma } from './services/prisma.js';
 import { validateTaskTransition, validateRunTransition } from './services/workflowStateMachine.js';
@@ -31,6 +32,48 @@ function getWorkerRedis(): Redis {
   return workerRedis;
 }
 
+async function cancelTaskRun(taskId: string, runId: string, reason: string): Promise<void> {
+  const finishedAt = new Date();
+
+  const run = await prisma.workflowRun.findUnique({ where: { id: runId } });
+  if (run) {
+    validateRunTransition(run.status, 'CANCELLED');
+    await prisma.workflowRun.update({
+      where: { id: runId },
+      data: { status: 'CANCELLED', finishedAt, errorSummary: reason },
+    });
+  }
+
+  const task = await prisma.task.findUniqueOrThrow({ where: { id: taskId } });
+  validateTaskTransition(task.status, 'CANCELLED');
+  await prisma.task.update({
+    where: { id: taskId },
+    data: { status: 'CANCELLED', completedAt: task.completedAt ?? finishedAt },
+  });
+}
+
+/**
+ * Re-reads the task so a cancellation requested while the job is running is
+ * honoured between steps (B4). Returns the current status, or null once the
+ * task and run have been moved to CANCELLED.
+ */
+async function honourCancellation(
+  taskId: string,
+  runId: string,
+  reason: string
+): Promise<TaskStatus | null> {
+  const { status } = await prisma.task.findUniqueOrThrow({
+    where: { id: taskId },
+    select: { status: true },
+  });
+  if (status === 'CANCEL_REQUESTED') {
+    logger.info(`[Worker] Task ${taskId} cancellation requested. Stopping run ${runId}.`);
+    await cancelTaskRun(taskId, runId, reason);
+    return null;
+  }
+  return status;
+}
+
 export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
   const { taskId, runId, workspaceId, simulatedFailure } = job.data;
   const startedAt = new Date();
@@ -53,18 +96,7 @@ export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
   // Check if task was cancelled before pickup
   if (task.status === 'CANCEL_REQUESTED' || task.status === 'CANCELLED') {
     logger.info(`[Worker] Task ${taskId} has been cancelled. Marking run cancelled.`);
-    await prisma.workflowRun.update({
-      where: { id: runId },
-      data: {
-        status: 'CANCELLED',
-        finishedAt: new Date(),
-        errorSummary: 'Task cancelled by user before execution commenced.',
-      },
-    });
-    await prisma.task.update({
-      where: { id: taskId },
-      data: { status: 'CANCELLED' },
-    });
+    await cancelTaskRun(taskId, runId, 'Task cancelled by user before execution commenced.');
     return;
   }
 
@@ -109,6 +141,10 @@ export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
       },
     });
 
+    if ((await honourCancellation(taskId, runId, 'Task cancelled by user after VALIDATE_CONTEXT.')) === null) {
+      return;
+    }
+
     // Check simulated failure flag for automated tests
     if (simulatedFailure) {
       throw new Error('Simulated worker fault for test verification');
@@ -150,6 +186,10 @@ export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
       },
     });
 
+    if ((await honourCancellation(taskId, runId, 'Task cancelled by user after INSPECT_REPOSITORY.')) === null) {
+      return;
+    }
+
     // Step 3: Spec & Plan Generation
     await prisma.workflowStep.create({
       data: {
@@ -166,6 +206,10 @@ export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
         },
       },
     });
+
+    if ((await honourCancellation(taskId, runId, 'Task cancelled by user after GENERATE_SPEC.')) === null) {
+      return;
+    }
 
     // Step 4: Boundary & Safety Audit
     await prisma.workflowStep.create({
@@ -184,7 +228,17 @@ export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
       },
     });
 
-    // Mark Task & Run as COMPLETED
+    // Mark Task & Run as COMPLETED, unless cancellation was requested meanwhile
+    const statusBeforeCompletion = await honourCancellation(
+      taskId,
+      runId,
+      'Task cancelled by user after VERIFY_BOUNDARIES.'
+    );
+    if (statusBeforeCompletion === null) {
+      return;
+    }
+    validateTaskTransition(statusBeforeCompletion, 'COMPLETED');
+
     const finishedAt = new Date();
     await prisma.workflowRun.update({
       where: { id: runId },
@@ -220,6 +274,27 @@ export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     const finishedAt = new Date();
+
+    // A cancellation requested during the failed attempt wins over a retry
+    if ((await honourCancellation(taskId, runId, 'Task cancelled by user after a failed attempt.')) === null) {
+      return;
+    }
+
+    // B3: FAILED is terminal, so only the final attempt may set it. Earlier
+    // attempts leave the task and run RUNNING and let BullMQ retry.
+    const attempt = job.attemptsMade + 1;
+    const maxAttempts = job.opts.attempts ?? 1;
+    if (attempt < maxAttempts) {
+      logger.warn(`[Worker] Task ${taskId} attempt ${attempt}/${maxAttempts} failed; retrying`, {
+        runId,
+        error: errorMsg,
+      });
+      await prisma.workflowRun.update({
+        where: { id: runId },
+        data: { errorSummary: `Attempt ${attempt} of ${maxAttempts} failed: ${errorMsg}` },
+      });
+      throw err;
+    }
 
     logger.error(`[Worker] Task ${taskId} failed during processing`, {
       runId,
