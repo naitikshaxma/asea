@@ -376,6 +376,10 @@ model VerificationRun {
   verdict      String?
   startedAt    DateTime?
   completedAt  DateTime?
+  // Seal set when the run reaches a terminal state: the audit chain's head
+  // hash and event count just before the RUN_SEALED event (see runSeal.ts)
+  auditHeadHash   String?
+  auditEventCount Int?
   createdAt    DateTime              @default(now())
   updatedAt    DateTime              @updatedAt
 

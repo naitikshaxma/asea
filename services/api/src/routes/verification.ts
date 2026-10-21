@@ -11,6 +11,7 @@ import { requireAuth, requireWorkspaceMembership } from '../middlewares/authMidd
 import { AppError } from '../middlewares/errorHandler.js';
 import { verifyAuditChain } from '../services/auditChain.js';
 import { VERIFICATION_RESOURCE_TYPE, findingsDigest } from '../services/verification/verificationService.js';
+import { verifyRunSeal } from '../services/verification/runSeal.js';
 
 export const verificationRouter = Router({ mergeParams: true });
 
@@ -121,8 +122,9 @@ verificationRouter.get(
 );
 
 /**
- * Checks the run's audit hash chain and, once static analysis has completed,
- * that the stored findings still match the digest recorded in the chain.
+ * Checks the run's audit hash chain, its seal (terminal runs: detects removed
+ * trailing events and edited head/count), and, once static analysis has
+ * completed, that the stored findings still match the digest in the chain.
  */
 verificationRouter.get(
   '/workspaces/:workspaceId/verification-runs/:runId/audit/verify',
@@ -144,7 +146,19 @@ verificationRouter.get(
         findingsDigestValid = recordedDigest === findingsDigest(rows);
       }
 
-      const body: AuditChainVerificationResponse = { verificationRunId: run.id, ...chain, findingsDigestValid };
+      const seal = verifyRunSeal(run, events, chain);
+
+      const body: AuditChainVerificationResponse = {
+        verificationRunId: run.id,
+        valid: chain.valid && seal.valid !== false && findingsDigestValid !== false,
+        length: chain.length,
+        headHash: chain.valid ? chain.headHash : undefined,
+        chain: chain.valid
+          ? { valid: true }
+          : { valid: false, brokenEventId: chain.brokenEventId, reason: chain.reason },
+        seal,
+        findingsDigestValid,
+      };
       res.status(200).json(body);
     } catch (err) {
       next(err);

@@ -29,6 +29,8 @@ describe('Verification run routes', () => {
     completedAt: new Date('2026-10-21T10:00:05Z'),
     createdAt: new Date('2026-10-21T09:59:59Z'),
     updatedAt: new Date('2026-10-21T10:00:05Z'),
+    auditHeadHash: null as string | null,
+    auditEventCount: null as number | null,
     _count: { findings: 1 },
   };
   const finding = {
@@ -49,16 +51,21 @@ describe('Verification run routes', () => {
 
   let findingRows: Array<typeof finding>;
   let events: ChainedAuditEvent[];
+  let runRow: typeof run;
 
+  // A completed run's chain, sealed the way finishVerificationRun seals it
   function buildChain(): ChainedAuditEvent[] {
     const chain: ChainedAuditEvent[] = [];
     let last: string | null = null;
-    const metadata = [
+    const metadata: Array<Record<string, unknown>> = [
       { attemptNumber: 1 },
       { attemptNumber: 1, findingCount: 1, findingsDigest: findingsDigest([finding as any]) },
       { findingCount: 1 },
     ];
-    ['VERIFICATION_STARTED', 'STATIC_ANALYSIS_COMPLETED', 'VERIFICATION_COMPLETED'].forEach((eventType, i) => {
+    ['VERIFICATION_STARTED', 'STATIC_ANALYSIS_COMPLETED', 'VERIFICATION_COMPLETED', 'RUN_SEALED'].forEach((eventType, i) => {
+      if (eventType === 'RUN_SEALED') {
+        metadata[i] = { status: 'COMPLETED', auditHeadHash: last, auditEventCount: 3 };
+      }
       const fields = {
         id: `evt-${i}`,
         workspaceId,
@@ -80,6 +87,7 @@ describe('Verification run routes', () => {
   beforeEach(() => {
     findingRows = [{ ...finding }];
     events = buildChain();
+    runRow = { ...run, auditHeadHash: events[2]!.hash, auditEventCount: 3 };
     vi.spyOn(prisma.workspaceMembership, 'findUnique').mockResolvedValue({
       id: 'mem-r',
       workspaceId,
@@ -89,8 +97,8 @@ describe('Verification run routes', () => {
       workspace: { id: workspaceId, name: 'R', ownerId: 'user-r' },
     } as any);
     vi.spyOn(prisma.verificationRun, 'findFirst').mockImplementation((async ({ where }: any) =>
-      where.id === runId && where.workspaceId === workspaceId ? run : null) as any);
-    vi.spyOn(prisma.verificationRun, 'findMany').mockResolvedValue([run] as any);
+      where.id === runId && where.workspaceId === workspaceId ? runRow : null) as any);
+    vi.spyOn(prisma.verificationRun, 'findMany').mockImplementation((async () => [runRow]) as any);
     vi.spyOn(prisma.verificationFinding, 'findMany').mockImplementation((async ({ where }: any) =>
       findingRows.filter((f) => !where.severity || f.severity === where.severity)) as any);
     vi.spyOn(prisma.auditEvent, 'findMany').mockImplementation((async () => events) as any);
@@ -144,28 +152,60 @@ describe('Verification run routes', () => {
     expect(bad.body.error.code).toBe('BAD_REQUEST');
   });
 
-  it('verifies an intact audit chain and the findings digest', async () => {
-    const res = await get(`${base}/${runId}/audit/verify`);
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({
+  const verify = async () => (await get(`${base}/${runId}/audit/verify`)).body;
+
+  it('verifies an intact, sealed audit chain and the findings digest', async () => {
+    expect(await verify()).toEqual({
       verificationRunId: runId,
       valid: true,
-      length: 3,
-      headHash: events[2]!.hash,
+      length: 4,
+      headHash: events[3]!.hash,
+      chain: { valid: true },
+      seal: { required: true, valid: true },
       findingsDigestValid: true,
     });
   });
 
   it('reports a tampered audit event', async () => {
     events[1] = { ...events[1]!, metadata: { attemptNumber: 1, findingCount: 0 } };
-    const res = await get(`${base}/${runId}/audit/verify`);
-    expect(res.body).toMatchObject({ valid: false, brokenEventId: 'evt-1', length: 1 });
+    expect(await verify()).toMatchObject({
+      valid: false,
+      chain: { valid: false, brokenEventId: 'evt-1' },
+      seal: { valid: false, reason: 'Audit chain is broken' },
+    });
   });
 
   it('reports findings edited after the digest was recorded', async () => {
     findingRows[0] = { ...findingRows[0]!, severity: 'LOW' };
-    const res = await get(`${base}/${runId}/audit/verify`);
-    expect(res.body).toMatchObject({ valid: true, findingsDigestValid: false });
+    expect(await verify()).toMatchObject({ valid: false, chain: { valid: true }, findingsDigestValid: false });
+  });
+
+  // Truncation: the remaining chain still links correctly; only the seal shows the loss
+  it.each([
+    ['the last event', 1],
+    ['the last two events', 2],
+  ])('detects deleting %s', async (_label, count) => {
+    events = events.slice(0, events.length - count);
+    const body = await verify();
+    expect(body.chain).toEqual({ valid: true });
+    expect(body).toMatchObject({
+      valid: false,
+      seal: { required: true, valid: false, reason: expect.stringMatching(/RUN_SEALED event is missing/) },
+    });
+  });
+
+  it('detects a changed event count or head hash on the run', async () => {
+    runRow = { ...runRow, auditEventCount: 2 };
+    expect(await verify()).toMatchObject({ valid: false, seal: { valid: false, reason: expect.stringMatching(/event count/) } });
+
+    runRow = { ...runRow, auditEventCount: 3, auditHeadHash: events[1]!.hash };
+    expect(await verify()).toMatchObject({ valid: false, seal: { valid: false, reason: expect.stringMatching(/head hash/) } });
+  });
+
+  it('does not require a seal while the run is in progress', async () => {
+    runRow = { ...runRow, status: 'RUNNING', auditHeadHash: null, auditEventCount: null };
+    events = events.slice(0, 1);
+    expect(await verify()).toMatchObject({ valid: true, seal: { required: false, valid: null }, findingsDigestValid: null });
   });
 
   it('returns 404 for a run in another workspace and requires auth and membership', async () => {

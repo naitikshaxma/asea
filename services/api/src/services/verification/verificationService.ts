@@ -7,6 +7,7 @@ import { canonicalJson, chainAuditEvent, verifyAuditChain } from '../auditChain.
 import { resolveRepositoryFsPath } from '../intelligence/repositoryAnalysisService.js';
 import { buildVerificationRequest } from './gitDiff.js';
 import { requestStaticAnalysis } from './agentClient.js';
+import { RUN_SEALED } from './runSeal.js';
 
 type Db = PrismaClient | Prisma.TransactionClient;
 type FindingRow = Omit<VerificationFinding, 'id' | 'createdAt'>;
@@ -14,8 +15,9 @@ type FindingRow = Omit<VerificationFinding, 'id' | 'createdAt'>;
 export const VERIFICATION_RESOURCE_TYPE = 'VerificationRun';
 
 /**
- * Appends an AuditEvent to a VerificationRun's hash chain. Refuses to extend a
- * chain that no longer verifies.
+ * Appends an AuditEvent to a VerificationRun's hash chain and returns the new
+ * head and length. Refuses to extend a chain that no longer verifies or that
+ * has been sealed.
  */
 export async function appendVerificationAuditEvent(
   db: Db,
@@ -23,13 +25,16 @@ export async function appendVerificationAuditEvent(
   eventType: string,
   metadata: Prisma.InputJsonObject,
   actorId: string | null
-): Promise<void> {
+): Promise<{ headHash: string; length: number }> {
   const existing = await db.auditEvent.findMany({
     where: { resourceType: VERIFICATION_RESOURCE_TYPE, resourceId: run.id },
   });
   const chain = verifyAuditChain(existing);
   if (!chain.valid) {
     throw new Error(`Audit chain of verification run ${run.id} is broken at ${chain.brokenEventId}: ${chain.reason}`);
+  }
+  if (existing.some((e) => e.eventType === RUN_SEALED)) {
+    throw new Error(`Verification run ${run.id} is sealed; its audit chain cannot be extended`);
   }
 
   const fields = {
@@ -43,7 +48,45 @@ export async function appendVerificationAuditEvent(
     requestId: null,
     timestamp: new Date(),
   };
-  await db.auditEvent.create({ data: { ...fields, ...chainAuditEvent(chain.headHash, fields) } });
+  const link = chainAuditEvent(chain.headHash, fields);
+  await db.auditEvent.create({ data: { ...fields, ...link } });
+  return { headHash: link.hash, length: chain.length + 1 };
+}
+
+/**
+ * Moves a run to a terminal status: appends the final event, then RUN_SEALED
+ * recording the chain head and event count at that point, and stores the same
+ * head and count on the run (see runSeal.ts). Call inside a transaction.
+ */
+export async function finishVerificationRun(
+  db: Db,
+  run: Pick<VerificationRun, 'id' | 'workspaceId'>,
+  outcome: {
+    status: 'COMPLETED' | 'FAILED';
+    eventType: string;
+    metadata: Prisma.InputJsonObject;
+    data?: Prisma.VerificationRunUpdateInput;
+  },
+  actorId: string | null
+): Promise<void> {
+  const sealed = await appendVerificationAuditEvent(db, run, outcome.eventType, outcome.metadata, actorId);
+  await appendVerificationAuditEvent(
+    db,
+    run,
+    RUN_SEALED,
+    { status: outcome.status, auditHeadHash: sealed.headHash, auditEventCount: sealed.length },
+    actorId
+  );
+  await db.verificationRun.update({
+    where: { id: run.id },
+    data: {
+      ...outcome.data,
+      status: outcome.status,
+      completedAt: new Date(),
+      auditHeadHash: sealed.headHash,
+      auditEventCount: sealed.length,
+    },
+  });
 }
 
 /** sha256 over the run's findings, recorded in the audit chain so edits to them are detectable. */
@@ -149,7 +192,6 @@ export async function runVerificationStep(args: {
 
     await prisma.$transaction(async (tx) => {
       await tx.verificationFinding.createMany({ data: rows });
-      await tx.verificationRun.update({ where: { id: run.id }, data: { status: 'COMPLETED', completedAt: new Date() } });
       await appendVerificationAuditEvent(
         tx,
         run,
@@ -164,21 +206,24 @@ export async function runVerificationStep(args: {
         },
         args.actorId
       );
-      await appendVerificationAuditEvent(tx, run, 'VERIFICATION_COMPLETED', { findingCount: rows.length }, args.actorId);
+      await finishVerificationRun(
+        tx,
+        run,
+        { status: 'COMPLETED', eventType: 'VERIFICATION_COMPLETED', metadata: { findingCount: rows.length } },
+        args.actorId
+      );
     });
 
     return { verificationRunId: run.id, ...summary };
   } catch (err: unknown) {
     const error = err instanceof Error ? err.message : String(err);
-    await appendVerificationAuditEvent(
-      prisma,
-      run,
-      args.isFinalAttempt ? 'VERIFICATION_FAILED' : 'VERIFICATION_ATTEMPT_FAILED',
-      { attemptNumber: args.attemptNumber, error },
-      args.actorId
-    );
+    const metadata = { attemptNumber: args.attemptNumber, error };
     if (args.isFinalAttempt) {
-      await prisma.verificationRun.update({ where: { id: run.id }, data: { status: 'FAILED', completedAt: new Date() } });
+      await prisma.$transaction((tx) =>
+        finishVerificationRun(tx, run, { status: 'FAILED', eventType: 'VERIFICATION_FAILED', metadata }, args.actorId)
+      );
+    } else {
+      await appendVerificationAuditEvent(prisma, run, 'VERIFICATION_ATTEMPT_FAILED', metadata, args.actorId);
     }
     throw err;
   }

@@ -194,7 +194,7 @@ Submit a `VERIFICATION` task (see [docs/development.md](docs/development.md)); t
 - `GET /api/v1/workspaces/:workspaceId/verification-runs?taskId=` — Verification runs (latest first), optionally for one task
 - `GET /api/v1/workspaces/:workspaceId/verification-runs/:runId` — One verification run (score and verdict are null until scoring exists)
 - `GET /api/v1/workspaces/:workspaceId/verification-runs/:runId/findings?severity=` — The run's findings
-- `GET /api/v1/workspaces/:workspaceId/verification-runs/:runId/audit/verify` — Checks the run's audit hash chain and that the findings match the digest recorded in it
+- `GET /api/v1/workspaces/:workspaceId/verification-runs/:runId/audit/verify` — Checks the run's audit hash chain, its seal (a terminal run must end with RUN_SEALED matching the head hash and event count stored on the run, so removed trailing events are detected) and the findings digest
 
 ---
 
@@ -203,10 +203,10 @@ Submit a `VERIFICATION` task (see [docs/development.md](docs/development.md)); t
 Typecheck and the TypeScript test suites need step 2 of the setup (contracts built, Prisma Client generated). They do not need a running database.
 
 ```bash
-# Run all Node.js and Frontend tests (111 API tests + 11 Web tests = 122 tests):
+# Run all Node.js and Frontend tests (123 API tests + 11 Web tests = 134 tests):
 npm test
 
-# Run API test suite individually (111 tests):
+# Run API test suite individually (123 tests):
 npm run test:api
 
 # Run Web test suite individually (11 tests):
@@ -215,7 +215,7 @@ npm run test:web
 # Run Python Pytest test suite (60 agent tests):
 npm run test:python
 
-# Run All (TypeScript + Python = 182 total automated tests):
+# Run All (TypeScript + Python = 194 total automated tests):
 npm run test:all
 
 # Run type checking across all TypeScript workspaces:

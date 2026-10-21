@@ -53,11 +53,23 @@ export type VerificationFindingListResponse = z.infer<typeof VerificationFinding
 
 export const AuditChainVerificationResponseSchema = z.object({
   verificationRunId: z.string(),
+  // True only when no check below failed
   valid: z.boolean(),
   length: z.number().int(),
   headHash: z.string().nullable().optional(),
-  brokenEventId: z.string().optional(),
-  reason: z.string().optional(),
+  // Hash links and recomputed hashes of every event
+  chain: z.object({
+    valid: z.boolean(),
+    brokenEventId: z.string().optional(),
+    reason: z.string().optional(),
+  }),
+  // Terminal runs must end with a RUN_SEALED event matching the head hash and
+  // event count stored on the run; valid is null while the run is in progress
+  seal: z.object({
+    required: z.boolean(),
+    valid: z.boolean().nullable(),
+    reason: z.string().optional(),
+  }),
   // Whether the stored findings match the digest recorded when static analysis
   // completed; null until then
   findingsDigestValid: z.boolean().nullable(),

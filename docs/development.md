@@ -106,7 +106,7 @@ npm run dev:agent
 
 ### Run All Tests
 ```bash
-# Run TypeScript tests (111 API tests + 11 Web tests = 122 tests)
+# Run TypeScript tests (123 API tests + 11 Web tests = 134 tests)
 npm test
 
 # Run API test suite individually
@@ -171,7 +171,7 @@ A `VERIFICATION` task needs `repositoryId` (a registered local git repository in
 - `GET /api/v1/workspaces/:workspaceId/verification-runs?taskId=` — Verification runs (latest first), optionally for one task
 - `GET /api/v1/workspaces/:workspaceId/verification-runs/:runId` — One verification run (score and verdict are null until scoring exists)
 - `GET /api/v1/workspaces/:workspaceId/verification-runs/:runId/findings?severity=` — The run's findings
-- `GET /api/v1/workspaces/:workspaceId/verification-runs/:runId/audit/verify` — Checks the run's audit hash chain and that the findings match the digest recorded in it
+- `GET /api/v1/workspaces/:workspaceId/verification-runs/:runId/audit/verify` — Checks the run's audit hash chain, its seal (a terminal run must end with RUN_SEALED matching the head hash and event count stored on the run, so removed trailing events are detected) and the findings digest
 
 ---
 

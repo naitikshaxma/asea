@@ -15,6 +15,7 @@ import { requestStaticAnalysis } from '../../src/services/verification/agentClie
 import { buildVerificationRequest } from '../../src/services/verification/gitDiff.js';
 import { verifyAuditChain } from '../../src/services/auditChain.js';
 import { findingsDigest } from '../../src/services/verification/verificationService.js';
+import { verifyRunSeal } from '../../src/services/verification/runSeal.js';
 import type { TaskJobPayload } from '../../src/services/queueService.js';
 
 const engineResult: StaticAnalysisResult = {
@@ -113,6 +114,8 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
       verdict: null,
       startedAt: null,
       completedAt: null,
+      auditHeadHash: null,
+      auditEventCount: null,
       createdAt: new Date(),
     };
     findings = [];
@@ -204,8 +207,21 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
     expect(verificationRun.verdict).toBeNull();
     expect(task.status).toBe('COMPLETED');
 
-    expect(eventTypes()).toEqual(['VERIFICATION_STARTED', 'STATIC_ANALYSIS_COMPLETED', 'VERIFICATION_COMPLETED']);
-    expect(verifyAuditChain(chain())).toMatchObject({ valid: true, length: 3 });
+    expect(eventTypes()).toEqual([
+      'VERIFICATION_STARTED',
+      'STATIC_ANALYSIS_COMPLETED',
+      'VERIFICATION_COMPLETED',
+      'RUN_SEALED',
+    ]);
+    const verified = verifyAuditChain(chain());
+    expect(verified).toMatchObject({ valid: true, length: 4 });
+
+    // Sealed: the run stores the head and count as of VERIFICATION_COMPLETED, and RUN_SEALED records them
+    const completedEvent = chain()[2]!;
+    expect(verificationRun.auditHeadHash).toBe(completedEvent.hash);
+    expect(verificationRun.auditEventCount).toBe(3);
+    expect(chain()[3]!.metadata).toEqual({ status: 'COMPLETED', auditHeadHash: completedEvent.hash, auditEventCount: 3 });
+    expect(verifyRunSeal(verificationRun as any, chain() as any, verified)).toEqual({ required: true, valid: true });
     const completed = chain().find((a) => a.eventType === 'STATIC_ANALYSIS_COMPLETED')!;
     expect(completed.metadata.findingsDigest).toBe(findingsDigest(findings as any));
   });
@@ -226,9 +242,11 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
       'VERIFICATION_STARTED',
       'STATIC_ANALYSIS_COMPLETED',
       'VERIFICATION_COMPLETED',
+      'RUN_SEALED',
     ]);
     expect(chain()[1].metadata).toEqual({ attemptNumber: 1, error: 'Agent service returned 503' });
-    expect(verifyAuditChain(chain())).toMatchObject({ valid: true, length: 5 });
+    expect(verifyAuditChain(chain())).toMatchObject({ valid: true, length: 6 });
+    expect(verificationRun.auditEventCount).toBe(5);
     expect(verificationRun.status).toBe('COMPLETED');
     expect(findings).toHaveLength(2);
     // The successful attempt's steps are in the attempt-2 run
@@ -247,8 +265,11 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
 
     expect(verificationRun.status).toBe('FAILED');
     expect(task.status).toBe('FAILED');
-    expect(eventTypes()).toEqual(['VERIFICATION_STARTED', 'VERIFICATION_FAILED']);
-    expect(verifyAuditChain(chain()).valid).toBe(true);
+    expect(eventTypes()).toEqual(['VERIFICATION_STARTED', 'VERIFICATION_FAILED', 'RUN_SEALED']);
+    const verified = verifyAuditChain(chain());
+    expect(verified.valid).toBe(true);
+    expect(verificationRun.auditEventCount).toBe(2);
+    expect(verifyRunSeal(verificationRun as any, chain() as any, verified).valid).toBe(true);
   });
 
   it('does not analyse again when the verification run already completed', async () => {
@@ -264,6 +285,15 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
       alreadyCompleted: true,
     });
     expect(task.status).toBe('COMPLETED');
+  });
+
+  it('refuses to extend a sealed audit chain', async () => {
+    await processTaskJob(job(0));
+    verificationRun.status = 'RUNNING'; // e.g. a status edited back by hand
+    task.status = 'RUNNING';
+
+    await expect(processTaskJob(job(1))).rejects.toThrow(/vr-1 is sealed/);
+    expect(eventTypes().at(-1)).toBe('RUN_SEALED');
   });
 
   it('refuses to extend an audit chain that no longer verifies', async () => {
