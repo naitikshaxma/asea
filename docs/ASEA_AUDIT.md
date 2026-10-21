@@ -329,3 +329,66 @@ Found or left open during this session:
 - **Contracts.** `executionMetadata.sandboxType` is still an optional field in `packages/contracts/src/tasks.ts`, unused now. Enum drift (B8) is unchanged.
 - **Not addressed this session:** S4, S5, S6, S7, S8; B8–B16 and B18; the rest of §6.3 docs drift (ranking weights, action names, queue/job names, bcrypt cost, `commitHash`, `SECRET_EXCLUDED`/`SYMLINK_ESCAPE`, binary-sniffing description in `docs/security.md`, `/analysis` vs `/analysis/latest`, rate limiting, absolute `file:///` doc links).
 - **Intentionally unchanged.** The README "Product Vision" and agent-service "Roadmap" still mention AST code graphs; they describe planned work, not current behaviour.
+
+---
+
+## 10. Session 2 changes
+
+Goal: the first deterministic ASEA verification path, end to end. No LLM, Qdrant, LangGraph or GitHub work. Branch `session-1-baseline` (continued), one commit per task.
+
+Decisions recorded for this session (not revisited): Express + Prisma + BullMQ + React/Vite stay and Prisma owns the schema; `services/agent-service` is the ASEA verification engine and is **stateless** (it never touches Postgres; the Node worker persists everything). Decisions made during the session, on request:
+
+- A VERIFICATION task's diff comes from **git on the registered local repository** (`baseSha..headSha`), not from the client.
+- The **VerificationRun is created at submission** (QUEUED, holding baseSha, headSha, authorType and the requirement) and linked by a new nullable `VerificationRun.taskId`.
+- VERIFICATION tasks run **VALIDATE_CONTEXT then STATIC_ANALYSIS only**; the placeholder steps stay for the other task types.
+
+### 10.1 Done
+
+| Task | Commit | Change |
+|---|---|---|
+| — | `c659909` | The audit moved from the untracked repo root to `docs/ASEA_AUDIT.md` (tracked). |
+| 0. WorkflowRun per attempt (B3 follow-up) | `3238502` | Each BullMQ attempt has its own WorkflowRun (`attemptNumber = data.attemptNumber + attemptsMade`, found or created, so a stalled re-run reuses it). Every failed attempt marks its run FAILED; only the final attempt fails the task. Steps attach to their attempt's run. |
+| 1. ASEA contract | `9ccf015` | `VerificationRequest`, `ChangedFile`, `Finding`, `StaticAnalysisResult` in Pydantic (`app/verification/contract.py`) and Zod (`packages/contracts/src/verification.ts`), snake_case on the wire. Sync test: the Zod schemas' JSON Schema is pinned in `packages/contracts/schemas/asea-contract.schema.json` (Vitest file snapshot); pytest normalises that file and Pydantic's `model_json_schema()` and compares them, and checks that the comparison catches drift. |
+| 2. Prisma models + hash chain | `927b377` | `VerificationRun`, `VerificationFinding` and their enums; `AuditEvent.prevHash`/`hash` (nullable; only VerificationRun events are chained). `auditChain.ts`: `hash = sha256(prevHash + canonicalJson(all other event fields))`, genesis = 64 zeros; `verifyAuditChain` follows the links from genesis (input order does not matter) and detects edited fields, edited or missing links, deleted events and forks. Known-answer hash cross-checked with Python. |
+| 3. Fixtures | `aac7acf` | `tests/fixtures/demo_app/` (Flask: services layer, `@login_required`, `validate_payload()`, tests) and `diffs/` (`clean`, `missing_auth`, `secret_and_sql`, `no_tests`), each with `*.expected_findings.json`. The diffs are real `git diff` output; expected lines were located by text search, not by the analyzer. |
+| 4. Static-analysis node | `4d9e420` | `POST /api/v1/verify/static`. Python ast checks limited to the changed lines (unidiff; added lines plus removal points): `ROUTE-NO-AUTH` (configurable decorators), `BARE-EXCEPT`, `HARDCODED-SECRET` (value redacted), `SUBPROCESS-SHELL`, `EVAL-EXEC`, `SQL-STRING-FORMAT`, `TEST-GAP`, plus `PARSE-ERROR`. Semgrep (`p/python`, `--json`, argument list, timeout) runs on the changed files in a temp dir; if unavailable it is listed in `tools_unavailable` and the ast results are still returned; a Semgrep result on a file+line the ast checks reported is merged into that finding. WSL and Docker usage is documented in the agent-service README. |
+| 5. Agent hardening (S8) | `be5aaf6` | CORS removed; `X-Internal-Token` required on `/api/v1/*` (constant-time compare; 503 while `INTERNAL_SERVICE_TOKEN` is unset); 413 above `AGENT_MAX_REQUEST_BYTES` for declared and streamed bodies. |
+| 6. End to end | `edf33e6`, `8a84640` | VERIFICATION task type; submission creates the VerificationRun in the task's transaction. The worker builds the request with git (`execFile`, no shell, timeout, SHA validation, `--no-ext-diff --no-textconv` and `-c` overrides so repository config cannot run commands), calls the agent at `AI_SERVICE_URL` (now used) with the token, persists the findings and hash-chained events (`VERIFICATION_STARTED`, `STATIC_ANALYSIS_COMPLETED` with a digest of the findings, `VERIFICATION_COMPLETED`; or `VERIFICATION_ATTEMPT_FAILED` / `VERIFICATION_FAILED`), and writes the STATIC_ANALYSIS step. Routes: list runs (`?taskId`), get a run, findings (`?severity`), `audit/verify` (chain result plus `findingsDigestValid`). score and verdict stay null. `8a84640` raises the timeout of the git-based builder tests (see 10.2). |
+
+IDs closed or advanced: **S8** fixed; **B3** follow-up (per-attempt runs) done; **B12** in part (`AI_SERVICE_URL` is used); §4 "Audit trail" now has a hash chain for verification runs; §8 tasks 4 and 5 (contract, first deterministic node) done.
+
+### 10.2 Test results at end of session
+
+Run locally on Windows, Node 24, Python venv in `services/agent-service/.venv`.
+
+| Command | Result |
+|---|---|
+| `npm run typecheck` | pass |
+| `npm run test:api` | 111 passed (19 files); was 78 |
+| `npm run test:web` | 11 passed |
+| `npm run test:python` | 60 passed, 1 third-party deprecation warning (starlette); was 5 |
+| `npm run build` | pass |
+
+The first end-of-session run had one failure: the git builder test that checks repository-configured commands are not run. It reproduced twice with typecheck running concurrently (5.0 s against Vitest's 5 s default; it spawns about a dozen git processes) and passed twice under the same load once its timeout was raised to 30 s (`8a84640`). The results above are after that fix.
+
+Checked beyond the automated suites, using throwaway containers (the dev database was not touched):
+
+- All four migrations apply to an empty Postgres 16, and `prisma migrate diff --exit-code` reports no drift (checked after tasks 2 and 6).
+- A hash chain written through Prisma verifies after the JSONB round trip; a direct SQL edit is detected.
+- Real Semgrep (`semgrep/semgrep:1.181.0` via Docker): the fixtures give the same findings, raw paths and lines map correctly, and an ast + Semgrep hit on one line becomes one finding. `p/python` itself does not flag the fixtures' f-string SQL or `eval()`; the ast checks do.
+- `demo_app`'s own tests pass (with Flask installed) at the base and after `git apply` of each fixture diff.
+- End to end: real agent service (token enforced), a git repo built from the fixtures, a task submitted through the API and processed by the worker. Task COMPLETED with steps VALIDATE_CONTEXT, STATIC_ANALYSIS; 2 findings matching the fixtures; `audit/verify` valid; a SQL edit to a finding gives `findingsDigestValid: false` and a SQL edit to an audit event breaks the chain.
+
+Not verified: the full stack with Redis/BullMQ running (the worker function was invoked directly), and CI on GitHub (nothing was pushed).
+
+### 10.3 Deferred
+
+- **Semgrep.** Not installable natively on this Windows machine; the automated tests fake the process. `p/python` is fetched from the registry at run time, so the rule content is not pinned. Semgrep results are filtered to the changed lines, like the ast checks.
+- **Check heuristics.** Python only. `TEST-GAP` sees only the test files included in the request (the engine is stateless) and matches by name; route handlers are excluded. `SQL-STRING-FORMAT` only inspects the argument passed directly to `execute()`. Route detection covers `@x.route/get/post/put/patch/delete(...)`. Secret detection is name-based.
+- **Audit chain.** Removing the newest events is not detectable without storing the head hash on the VerificationRun. Task-level events (`TASK_*`) are not chained. Appends assume one writer per run.
+- **Verification lifecycle.** There is no CANCELLED status, so a VERIFICATION task cancelled before STATIC_ANALYSIS leaves its VerificationRun QUEUED. A failed STATIC_ANALYSIS step is not stored as a FAILED WorkflowStep (the same as the other steps; the error is on the WorkflowRun and in the chain). Configuration errors (missing token, bad repository path) are retried like transient ones.
+- **Worker host.** Needs `git` installed; repositories owned by another OS user may hit git's `safe.directory` check. Non-UTF-8 text files are decoded lossily.
+- **Agent service.** `/docs` and `/openapi.json` are unauthenticated. `(taskId, attemptNumber)` on WorkflowRun is not unique.
+- **No UI** for VERIFICATION tasks or findings.
+- **Carried over** from §9.3 and not addressed: S4–S7, B8–B11, B13–B16, B18, registration-time validation of repository URLs (S2 follow-up), the remaining §6.3 docs drift.
+- **Out of scope by decision:** scoring/verdict, LLM agents, Qdrant, LangGraph, GitHub.
