@@ -106,7 +106,7 @@ npm run dev:agent
 
 ### Run All Tests
 ```bash
-# Run TypeScript tests (81 API tests + 11 Web tests = 92 tests)
+# Run TypeScript tests (90 API tests + 11 Web tests = 101 tests)
 npm test
 
 # Run API test suite individually

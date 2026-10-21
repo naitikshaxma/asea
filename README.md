@@ -196,10 +196,10 @@ npm run dev:agent
 Typecheck and the TypeScript test suites need step 2 of the setup (contracts built, Prisma Client generated). They do not need a running database.
 
 ```bash
-# Run all Node.js and Frontend tests (81 API tests + 11 Web tests = 92 tests):
+# Run all Node.js and Frontend tests (90 API tests + 11 Web tests = 101 tests):
 npm test
 
-# Run API test suite individually (81 tests):
+# Run API test suite individually (90 tests):
 npm run test:api
 
 # Run Web test suite individually (11 tests):
@@ -208,7 +208,7 @@ npm run test:web
 # Run Python Pytest test suite (11 agent tests):
 npm run test:python
 
-# Run All (TypeScript + Python = 103 total automated tests):
+# Run All (TypeScript + Python = 112 total automated tests):
 npm run test:all
 
 # Run type checking across all TypeScript workspaces:

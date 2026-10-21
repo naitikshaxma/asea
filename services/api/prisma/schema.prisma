@@ -30,6 +30,38 @@ enum RepoConnectionStatus {
   PENDING
 }
 
+enum VerificationRunStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum AuthorType {
+  AI
+  HUMAN
+  UNKNOWN
+}
+
+enum FindingCategory {
+  STATIC
+  NEGATIVE_SPACE
+  ARCHITECTURE
+  TEST_GAP
+}
+
+enum FindingSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum FindingSource {
+  DETERMINISTIC
+  LLM
+}
+
 enum TaskType {
   BUG_INVESTIGATION
   CODE_PATCH
@@ -129,6 +161,7 @@ model Workspace {
   tasks       Task[]
   auditEvents AuditEvent[]
   analyses    RepositoryAnalysis[]
+  verificationRuns VerificationRun[]
 
   @@index([ownerId])
 }
@@ -162,6 +195,7 @@ model Repository {
   workspace        Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   tasks            Task[]
   analyses         RepositoryAnalysis[]
+  verificationRuns VerificationRun[]
 
   @@index([workspaceId])
 }
@@ -269,6 +303,10 @@ model AuditEvent {
   metadata     Json?
   requestId    String?
   timestamp    DateTime   @default(now())
+  // Hash chain, set on events about a VerificationRun:
+  // hash = sha256(prevHash + canonical JSON of the event fields), see auditChain.ts
+  prevHash     String?
+  hash         String?
 
   workspace    Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
 
@@ -276,6 +314,7 @@ model AuditEvent {
   @@index([actorId])
   @@index([eventType])
   @@index([timestamp])
+  @@index([resourceType, resourceId])
 }
 
 model OutboxEvent {
@@ -316,4 +355,53 @@ model RepositoryAnalysis {
   @@index([workspaceId])
   @@index([status])
   @@index([createdAt])
+}
+
+// ASEA verification of a change (baseSha..headSha) against a requirement.
+// score and verdict stay null until scoring exists.
+model VerificationRun {
+  id           String                @id @default(uuid())
+  workspaceId  String
+  repositoryId String
+  baseSha      String
+  headSha      String
+  requirement  String
+  authorType   AuthorType
+  status       VerificationRunStatus @default(QUEUED)
+  score        Float?
+  verdict      String?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+
+  workspace    Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  repository   Repository            @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  findings     VerificationFinding[]
+
+  @@index([workspaceId])
+  @@index([repositoryId])
+  @@index([status])
+}
+
+// A Finding from the verification engine; findingId is the engine's Finding.id
+model VerificationFinding {
+  id                String          @id @default(uuid())
+  verificationRunId String
+  findingId         String
+  category          FindingCategory
+  severity          FindingSeverity
+  title             String
+  file              String
+  line              Int
+  evidence          String[]
+  source            FindingSource
+  ruleId            String
+  remediation       String
+  createdAt         DateTime        @default(now())
+
+  verificationRun   VerificationRun @relation(fields: [verificationRunId], references: [id], onDelete: Cascade)
+
+  @@unique([verificationRunId, findingId])
+  @@index([severity])
 }
