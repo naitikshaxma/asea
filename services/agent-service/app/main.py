@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.routers import health, analyze
+from app.routers import health, analyze, verify
 from app.schemas import ApiErrorEnvelope, ApiErrorDetail, ValidationErrorDetail
 
 app = FastAPI(
@@ -58,6 +58,7 @@ async def validation_exception_handler(
 # Mount routers
 app.include_router(health.router)
 app.include_router(analyze.router)
+app.include_router(verify.router)
 
 
 if __name__ == "__main__":
