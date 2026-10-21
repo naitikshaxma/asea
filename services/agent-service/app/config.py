@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     # Worker / sandbox boundary
     EXECUTION_SANDBOX_ENABLED: bool = False
 
+    # Service-to-service security (S8): /api/v1/* requires this value in the
+    # X-Internal-Token header; while unset, those routes return 503
+    INTERNAL_SERVICE_TOKEN: Optional[str] = None
+    AGENT_MAX_REQUEST_BYTES: int = 5 * 1024 * 1024
+
     # Static analysis (POST /api/v1/verify/static)
     # Comma-separated decorator names that count as authentication on a route
     ASEA_AUTH_DECORATORS: str = "login_required"

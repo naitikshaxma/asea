@@ -1,12 +1,17 @@
 from datetime import datetime, timezone
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.routers import health, analyze, verify
 from app.schemas import ApiErrorEnvelope, ApiErrorDetail, ValidationErrorDetail
+from app.security import (
+    InternalTokenMiddleware,
+    RequestSizeLimitMiddleware,
+    RequestTooLarge,
+    error_response,
+)
 
 app = FastAPI(
     title="Autonomous AI Software Engineering Platform - Agent Service",
@@ -14,14 +19,15 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# CORS configuration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# S8: no CORS; only the Node worker calls this service. Settings are read per
+# request so tests (and a reloaded config) take effect without a restart.
+app.add_middleware(RequestSizeLimitMiddleware, get_limit=lambda: settings.AGENT_MAX_REQUEST_BYTES)
+app.add_middleware(InternalTokenMiddleware, get_token=lambda: settings.INTERNAL_SERVICE_TOKEN)
+
+
+@app.exception_handler(RequestTooLarge)
+async def request_too_large_handler(request: Request, exc: RequestTooLarge) -> JSONResponse:
+    return error_response(413, "PAYLOAD_TOO_LARGE", str(exc.detail))
 
 
 @app.exception_handler(RequestValidationError)

@@ -45,6 +45,14 @@ pytest
 | `POST` | `/api/v1/analyze` | Repository task analysis and triage skeleton |
 | `POST` | `/api/v1/verify/static` | ASEA static analysis: `VerificationRequest` → `StaticAnalysisResult` |
 
+## Security
+
+Every `/api/v1/*` request needs the `X-Internal-Token` header set to
+`INTERNAL_SERVICE_TOKEN` (shared with the Node worker; while it is unset those
+routes return 503). There is no CORS: only the worker calls this service.
+Bodies over `AGENT_MAX_REQUEST_BYTES` (default 5 MiB) get 413. `/health` and
+`/ready` need no token.
+
 ## Static analysis (`POST /api/v1/verify/static`)
 
 Stateless and deterministic: the request carries the unified diff and the head

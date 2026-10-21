@@ -48,6 +48,11 @@ The Autonomous AI Software Engineering Platform is designed on **zero-trust prin
   - Verifies boundaries and records steps.
 - **Arbitrary shell execution is completely blocked.** Phase 3 does not execute user-provided scripts or shell commands.
 
+### 3.3 Agent Service Boundary (`services/agent-service`)
+- The agent service is called only by the worker, so it sends no CORS headers.
+- Every `/api/v1/*` request must carry `X-Internal-Token` equal to `INTERNAL_SERVICE_TOKEN` (constant-time comparison). With no token configured, `/api/v1/*` returns `503`; a missing or wrong token returns `401`. `/health` and `/ready` stay open.
+- Request bodies over `AGENT_MAX_REQUEST_BYTES` (default 5 MiB) are rejected with `413`, whether the size is declared in `Content-Length` or only discovered while the body streams in.
+
 ---
 
 ## 4. Repository Intelligence Security & Containment (Phase 3)
