@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import type { TaskResponse, ReadinessResponse } from '@autonomous-engineer/contracts';
+import type {
+  TaskResponse,
+  ReadinessResponse,
+  UserProfile,
+  WorkspaceResponse,
+} from '@autonomous-engineer/contracts';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { MetricsOverview } from './components/MetricsOverview';
@@ -7,12 +12,26 @@ import { TaskInputForm } from './components/TaskInputForm';
 import { ExecutionPanel } from './components/ExecutionPanel';
 import { RecentTasks } from './components/RecentTasks';
 import { RepoPlaceholder } from './components/RepoPlaceholder';
-import { fetchHealth, fetchReadiness, fetchTasks } from './api/client';
+import { AuthModal } from './components/AuthModal';
+import {
+  fetchHealth,
+  fetchReadiness,
+  fetchTasks,
+  fetchCurrentUser,
+  fetchWorkspaceTasks,
+  logoutUser,
+} from './api/client';
 import { ShieldAlert, BookOpen, Terminal } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState('overview');
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Auth State
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [workspaces, setWorkspaces] = useState<WorkspaceResponse[]>([]);
+  const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceResponse | null>(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
 
   // API State
   const [apiStatus, setApiStatus] = useState<'checking' | 'connected' | 'disconnected' | 'degraded'>('checking');
@@ -51,12 +70,17 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  const loadTasks = useCallback(async () => {
+  const loadTasks = useCallback(async (workspaceId?: string) => {
     setTasksLoading(true);
     setTasksError(null);
     try {
-      const data = await fetchTasks();
-      setTasks(data.tasks);
+      if (workspaceId) {
+        const data = await fetchWorkspaceTasks(workspaceId);
+        setTasks(data.tasks);
+      } else {
+        const data = await fetchTasks();
+        setTasks(data.tasks);
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Could not retrieve tasks from API';
       setTasksError(msg);
@@ -65,14 +89,65 @@ export const App: React.FC = () => {
     }
   }, []);
 
+  // Check auth session
+  const checkSession = useCallback(async () => {
+    try {
+      const session = await fetchCurrentUser();
+      setCurrentUser(session.user);
+      setWorkspaces(session.workspaces);
+      if (session.workspaces.length > 0 && session.workspaces[0]) {
+        const initialWs = session.workspaces[0];
+        setActiveWorkspace(initialWs);
+        loadTasks(initialWs.id);
+        return;
+      }
+    } catch {
+      // Unauthenticated or session expired; retain null
+      setCurrentUser(null);
+      setWorkspaces([]);
+      setActiveWorkspace(null);
+    }
+    loadTasks();
+  }, [loadTasks]);
+
+  const handleSelectWorkspace = (ws: WorkspaceResponse) => {
+    setActiveWorkspace(ws);
+    loadTasks(ws.id);
+  };
+
+  const handleLogout = async () => {
+    await logoutUser();
+    setCurrentUser(null);
+    setWorkspaces([]);
+    setActiveWorkspace(null);
+    loadTasks();
+  };
+
+  const handleAuthSuccess = (user: UserProfile, userWorkspaces?: WorkspaceResponse[]) => {
+    setCurrentUser(user);
+    const wsList = userWorkspaces || [];
+    setWorkspaces(wsList);
+    if (wsList.length > 0 && wsList[0]) {
+      setActiveWorkspace(wsList[0]);
+      loadTasks(wsList[0].id);
+    } else {
+      loadTasks();
+    }
+  };
+
   const refreshAll = useCallback(() => {
     checkConnectivity();
-    loadTasks();
-  }, [checkConnectivity, loadTasks]);
+    if (activeWorkspace) {
+      loadTasks(activeWorkspace.id);
+    } else {
+      loadTasks();
+    }
+  }, [checkConnectivity, activeWorkspace, loadTasks]);
 
   useEffect(() => {
-    refreshAll();
-  }, [refreshAll]);
+    checkConnectivity();
+    checkSession();
+  }, [checkConnectivity, checkSession]);
 
   return (
     <div className="min-h-screen bg-background flex flex-col lg:flex-row">
@@ -93,6 +168,12 @@ export const App: React.FC = () => {
           readinessData={readinessData}
           onRefresh={refreshAll}
           latency={latency}
+          currentUser={currentUser}
+          workspaces={workspaces}
+          activeWorkspace={activeWorkspace}
+          onSelectWorkspace={handleSelectWorkspace}
+          onOpenAuth={() => setAuthModalOpen(true)}
+          onLogout={handleLogout}
         />
 
         {/* View Router */}
@@ -103,11 +184,14 @@ export const App: React.FC = () => {
               <MetricsOverview taskCount={tasks.length} apiConnected={apiStatus !== 'disconnected'} />
 
               {/* Repository Attachment Status */}
-              <RepoPlaceholder />
+              <RepoPlaceholder activeWorkspace={activeWorkspace} />
 
               {/* Grid: Task Intake Form & Worker Sandbox */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <TaskInputForm onTaskCreated={loadTasks} />
+                <TaskInputForm
+                  onTaskCreated={() => (activeWorkspace ? loadTasks(activeWorkspace.id) : loadTasks())}
+                  activeWorkspaceId={activeWorkspace?.id}
+                />
                 <ExecutionPanel />
               </div>
 
@@ -116,34 +200,39 @@ export const App: React.FC = () => {
                 tasks={tasks}
                 loading={tasksLoading}
                 error={tasksError}
-                onRefresh={loadTasks}
+                onRefresh={() => (activeWorkspace ? loadTasks(activeWorkspace.id) : loadTasks())}
+                activeWorkspaceId={activeWorkspace?.id}
               />
             </>
           )}
 
           {activeTab === 'tasks' && (
             <div className="space-y-6">
-              <TaskInputForm onTaskCreated={loadTasks} />
+              <TaskInputForm
+                onTaskCreated={() => (activeWorkspace ? loadTasks(activeWorkspace.id) : loadTasks())}
+                activeWorkspaceId={activeWorkspace?.id}
+              />
               <RecentTasks
                 tasks={tasks}
                 loading={tasksLoading}
                 error={tasksError}
-                onRefresh={loadTasks}
+                onRefresh={() => (activeWorkspace ? loadTasks(activeWorkspace.id) : loadTasks())}
+                activeWorkspaceId={activeWorkspace?.id}
               />
             </div>
           )}
 
           {activeTab === 'repositories' && (
             <div className="space-y-6">
-              <RepoPlaceholder />
+              <RepoPlaceholder activeWorkspace={activeWorkspace} />
               <div className="p-6 rounded-xl bg-surface border border-surface-border text-xs text-slate-400 space-y-3">
                 <h3 className="text-sm font-semibold text-slate-200">Repository Capabilities Roadmap</h3>
                 <p>
-                  In Phase 1, repository operations are performed against local checkouts within verified boundaries.
+                  In Phase 2, repository metadata records can be associated with workspaces and used in task submissions. Real GitHub webhook listening and PR generation will follow in Phase 3.
                 </p>
                 <div className="p-4 rounded bg-surface-elevated font-mono text-[11px] text-slate-300 space-y-1">
                   <div>Phase 1: Local Monorepo Workspace Validation [ACTIVE]</div>
-                  <div>Phase 2: GitHub App App-Level Token Authentication &amp; Webhook Intake [PLANNED]</div>
+                  <div>Phase 2: Persistent Workspace Repositories &amp; BullMQ Pipeline [ACTIVE]</div>
                   <div>Phase 3: Automated Branch Isolation, Verified Patching &amp; PR Generation [PLANNED]</div>
                 </div>
               </div>
@@ -159,7 +248,7 @@ export const App: React.FC = () => {
                   <span>Execution Sandbox Worker Specification</span>
                 </h3>
                 <p className="text-xs text-slate-400 leading-relaxed">
-                  For safety reasons, no arbitrary shell code runs in Phase 1. All future execution takes place inside disposable microVM or rootless container environments with bounded CPU, memory, and blocked network access.
+                  Phase 2 background execution is managed by BullMQ workers backed by Redis. For safety reasons, no arbitrary shell code runs. The worker executes deterministic steps (validate context, inspect repository, generate spec, verify boundaries) and records workflow runs and steps in PostgreSQL.
                 </p>
               </div>
             </div>
@@ -180,16 +269,23 @@ export const App: React.FC = () => {
 
                 <div className="space-y-3 text-xs text-slate-300">
                   <div className="p-3.5 rounded-lg bg-surface-elevated border border-surface-border">
-                    <div className="font-semibold text-slate-200 mb-1">Credential Protection</div>
+                    <div className="font-semibold text-slate-200 mb-1">Password &amp; Session Security</div>
                     <p className="text-slate-400">
-                      The frontend contains zero database credentials or private keys. All sensitive secrets are managed via strictly scoped environment variables, validated at startup and masked in logs.
+                      Passwords are automatically hashed with bcrypt (cost factor 12) before storage. Authenticated sessions use signed JSON Web Tokens transmitted via secure, HttpOnly cookies and Bearer headers with role-based workspace authorization.
+                    </p>
+                  </div>
+
+                  <div className="p-3.5 rounded-lg bg-surface-elevated border border-surface-border">
+                    <div className="font-semibold text-slate-200 mb-1">Transactional Outbox Dispatch</div>
+                    <p className="text-slate-400">
+                      Task creation and workflow run initialization use atomic PostgreSQL transactions paired with an outbox pattern, preventing dual-write inconsistencies between database records and BullMQ Redis queues.
                     </p>
                   </div>
 
                   <div className="p-3.5 rounded-lg bg-surface-elevated border border-surface-border">
                     <div className="font-semibold text-slate-200 mb-1">Bounded Code Execution</div>
                     <p className="text-slate-400">
-                      Phase 1 does not permit arbitrary shell command execution. Phase 2 introduces disposable gVisor/Firecracker micro-sandboxes with dropped capabilities.
+                      No arbitrary shell command execution is permitted. Background processing runs deterministic validation routines, strictly preventing remote code execution vulnerabilities.
                     </p>
                   </div>
                 </div>
@@ -235,11 +331,19 @@ export const App: React.FC = () => {
                 <div>FastAPI Agent Service: http://localhost:8000</div>
                 <div>PostgreSQL: 127.0.0.1:5432</div>
                 <div>Redis: 127.0.0.1:6379</div>
+                <div>BullMQ Worker: Background Process / Dedicated Runner</div>
               </div>
             </div>
           )}
         </main>
       </div>
+
+      {/* Auth Modal */}
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        onAuthSuccess={handleAuthSuccess}
+      />
     </div>
   );
 };

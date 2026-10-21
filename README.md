@@ -15,17 +15,33 @@ The long-term objective of this platform is to take engineering tasks from natur
 
 ---
 
-## 2. Phase 1 Implementation Scope
+## 2. Phase 2 Architecture & Implemented Capabilities
 
-Phase 1 provides the foundational monorepo and contracts architecture:
+Phase 2 advances the platform from an in-memory proof of concept into a persistent, asynchronous, multi-tenant backend:
 
-- **Frontend Dashboard (`apps/web`)**: React 18, Vite 6, TypeScript, Tailwind CSS dark-first developer dashboard with sidebar navigation, metrics overview, live API connectivity indicator, task intake form, and honest empty/loading/error states.
-- **Control Plane API (`services/api`)**: Node.js 24 + Express 4 + TypeScript service with Zod schema validation, request ID propagation, credential-redacted JSON logging, centralized error handling, and `/health` and `/ready` endpoints.
-- **AI Agent Service Skeleton (`services/agent-service`)**: Python 3.12 + FastAPI + Pydantic v2 service skeleton with `/health`, `/ready`, and `/api/v1/analyze` endpoints. Operates using a local mock provider without requiring paid LLM API keys.
-- **Shared Contracts (`packages/contracts`)**: Unified Zod schemas and TypeScript types defining request tracing, standardized API error responses, health/readiness models, and task DTOs.
-- **Execution Worker Boundary (`workers/execution-worker`)**: Documented zero-trust security specification. Arbitrary host shell execution is disabled by design.
-- **Local Dev Infrastructure (`compose.yaml`)**: Containerized PostgreSQL 16 and Redis 7 with healthchecks, persistent dev volumes, and localhost-bound ports.
-- **Continuous Integration (`.github/workflows/ci.yml`)**: Multi-job GitHub Actions workflow covering type checking, Node tests, frontend tests, Python pytest, and build verification.
+- **Authoritative PostgreSQL Persistence**: Integrated **Prisma ORM** with migration-managed normalized schema: `User`, `Workspace`, `WorkspaceMembership`, `Repository`, `Task`, `WorkflowRun`, `WorkflowStep`, `Approval`, `AuditEvent`, and `OutboxEvent`.
+- **Authentication & Multi-Tenant Authorization**:
+  - Secure registration and login with **bcrypt** (cost factor 12) password hashing.
+  - Signed JSON Web Tokens (JWT) delivered via both `Authorization: Bearer` and secure `HttpOnly` cookies.
+  - Role-based access control (`OWNER`, `ADMIN`, `MEMBER`) strictly isolating workspace resources and tasks.
+- **Durable Task & Workflow Management**:
+  - Tasks, workflow runs, and workflow steps persist permanently across API and worker restarts.
+  - Centralized **Workflow State Machine** enforcing strict state transitions (`QUEUED`, `RUNNING`, `COMPLETED`, `FAILED`, `CANCEL_REQUESTED`, `CANCELLED`).
+  - Active task cancellation support.
+- **BullMQ & Redis Background Worker Pipeline**:
+  - Asynchronous background task execution isolated from the main Express API process.
+  - Dedicated background worker (`npm run dev:worker`) executing deterministic steps: `VALIDATE_CONTEXT`, `INSPECT_REPOSITORY`, `GENERATE_SPEC`, and `VERIFY_BOUNDARIES`.
+  - Exponential backoff retry policies and bounded execution.
+- **Transactional Outbox Pattern**:
+  - Guarantees durable dispatch between PostgreSQL and Redis, completely eliminating the dual-write problem.
+  - Atomic transaction commits task, workflow run, and outbox event; outbox dispatcher reliably delivers jobs to BullMQ.
+- **Interactive Developer Frontend (`apps/web`)**:
+  - React 18, Vite 6, and Tailwind CSS dashboard.
+  - User authentication modal (Sign In / Register) with auto-workspace provisioning.
+  - Workspace selector switching contexts in real time.
+  - Workspace repository registration and association.
+  - Expandable workflow run drawer showing real worker attempt history and step status.
+  - Zero mock task metrics or fabricated AI output: honestly reflects backend workflow state.
 
 ---
 
@@ -35,26 +51,26 @@ Phase 1 provides the foundational monorepo and contracts architecture:
 |---|---|
 | **Monorepo Management** | npm Workspaces, TypeScript 5.7, Node.js 24.x |
 | **Frontend** | React 18, Vite 6, Tailwind CSS 3.4, Lucide React, Vitest, Testing Library |
-| **Main API** | Node.js, Express 4, TypeScript, Zod, pg, ioredis, Vitest, Supertest |
+| **Main API & Backend** | Node.js, Express 4, TypeScript, Prisma ORM, BullMQ, bcryptjs, jsonwebtoken, cookie-parser, Zod, Vitest, Supertest |
+| **Persistence & Queue** | PostgreSQL 16 (Prisma migrations), Redis 7 (BullMQ) |
 | **AI Agent Service** | Python 3.12, FastAPI 0.115, Pydantic v2, Pytest, Httpx |
 | **Contracts** | TypeScript, Zod runtime schemas |
-| **Infrastructure** | Docker Compose v2, PostgreSQL 16 Alpine, Redis 7 Alpine |
 | **CI/CD** | GitHub Actions |
 
 ---
 
 ## 4. Implemented vs. Planned Functionality
 
-| Capability | Phase 1 (Current) | Phase 2+ (Roadmap) |
-|---|---|---|
-| **Monorepo & Contracts** | Full implementation (Zod + TS + Pydantic) | Incremental schema extensions |
-| **Task Intake & Validation** | Full intake validation & audit register | Multi-stage pipeline queue |
-| **Service Health Probing** | Express & FastAPI `/health` + `/ready` | Distributed tracing & OpenTelemetry |
-| **AI Reasoning Engine** | FastAPI skeleton with local mock provider | Multi-agent LangGraph / AutoGen loop |
-| **LLM Key Requirement** | None (100% runnable without API keys) | Configurable BYOK (OpenAI, Anthropic, Gemini) |
-| **Code Execution** | Host shell disabled; boundary documented | Disposable OCI / gVisor microVM sandboxes |
-| **Version Control** | Local repository checkout mode | GitHub App, webhooks & automated PRs |
-| **Database & Cache** | Docker Compose PostgreSQL 16 & Redis 7 | Prisma/Kysely migrations & BullMQ queue |
+| Capability | Phase 1 | Phase 2 (Current) | Phase 3+ (Roadmap) |
+|---|---|---|---|
+| **Monorepo & Contracts** | Initial Zod schemas | Extended Auth, Workspace, Repo & Task DTOs | Sandbox execution contracts |
+| **Task Persistence** | In-memory register | **PostgreSQL (Prisma ORM migrations)** | Large blob / artifact S3 storage |
+| **Task Queue & Workers** | Synchronous register | **BullMQ + Redis + Dedicated Worker** | Distributed worker autoscaling |
+| **Delivery Guarantee** | None | **Transactional Outbox Pattern** | Dead-letter queue inspection UI |
+| **User & Tenant Auth** | Open / None | **Bcrypt + JWT + HttpOnly Cookies + RBAC** | SSO / SAML / WebAuthn MFA |
+| **Repository Attachment** | Local checkout mode | **Workspace Repositories in PostgreSQL** | Real GitHub App & Webhook listener |
+| **Code Execution** | Host shell disabled | **Deterministic Safe Worker Steps** | Disposable gVisor / MicroVM sandboxes |
+| **AI Reasoning Engine** | FastAPI mock skeleton | FastAPI mock with validated contract | LangGraph / multi-agent reasoning loop |
 
 ---
 
@@ -81,7 +97,16 @@ cp .env.example .env
 npm install
 ```
 
-### 3. Setup Python Agent Service Virtual Environment
+### 3. Generate Database Client & Apply Migrations
+```bash
+# Generate the Prisma Client:
+npm run prisma:generate
+
+# Apply migrations to PostgreSQL (once containers are running):
+npm run prisma:migrate
+```
+
+### 4. Setup Python Agent Service Virtual Environment
 ```bash
 cd services/agent-service
 python -m venv .venv
@@ -114,15 +139,17 @@ To stop containers:
 npm run docker:down
 ```
 
-### Start Application Development Servers
+### Start Development Environment
 ```bash
-# Starts Express API (port 4000) and Web Frontend (port 5173) concurrently:
+# Starts Express API (4000), BullMQ Worker, and Web Frontend (5173) concurrently:
+npm run dev:all
+
+# Or run API and Web only:
 npm run dev
 ```
 
 ### Start Python AI Agent Service
 ```bash
-# From workspace root (with .venv activated):
 npm run dev:agent
 ```
 
@@ -143,11 +170,14 @@ npm run dev:agent
 ## 9. Automated Testing Commands
 
 ```bash
-# Run all Node.js and Frontend tests:
+# Run all Node.js and Frontend tests (32 API tests + 6 Web tests):
 npm test
 
-# Run Python Pytest test suite:
+# Run Python Pytest test suite (5 agent tests):
 npm run test:python
+
+# Run All (TypeScript + Python):
+npm run test:all
 
 # Run type checking across all TypeScript workspaces:
 npm run typecheck
@@ -160,7 +190,7 @@ npm run build
 
 ## 10. Documentation Index
 
-- [Architecture Specification](file:///c:/Users/sharm/OneDrive/Desktop/miniprject/docs/architecture.md)
-- [Local Development Guide](file:///c:/Users/sharm/OneDrive/Desktop/miniprject/docs/development.md)
-- [Security Architecture & Threat Model](file:///c:/Users/sharm/OneDrive/Desktop/miniprject/docs/security.md)
+- [Architecture Specification (Phase 2)](file:///c:/Users/sharm/OneDrive/Desktop/miniprject/docs/architecture.md)
+- [Local Development Guide (Phase 2)](file:///c:/Users/sharm/OneDrive/Desktop/miniprject/docs/development.md)
+- [Security Architecture & Threat Model (Phase 2)](file:///c:/Users/sharm/OneDrive/Desktop/miniprject/docs/security.md)
 - [Worker Sandbox Boundary](file:///c:/Users/sharm/OneDrive/Desktop/miniprject/workers/execution-worker/README.md)

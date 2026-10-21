@@ -4,38 +4,56 @@ import dotenv from 'dotenv';
 // Load .env if present
 dotenv.config();
 
-export const EnvSchema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  PORT: z.coerce.number().int().min(1).max(65535).default(4000),
-  HOST: z.string().default('0.0.0.0'),
-  CORS_ORIGIN: z.string().default('http://localhost:5173'),
-  LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
-  REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
+const DEV_JWT_SECRET = 'dev-insecure-jwt-secret-phase2-do-not-use-in-prod-xyz';
 
-  // AI Service integration
-  AI_SERVICE_URL: z.string().url().default('http://localhost:8000'),
+export const EnvSchema = z
+  .object({
+    NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+    PORT: z.coerce.number().int().min(1).max(65535).default(4000),
+    HOST: z.string().default('0.0.0.0'),
+    CORS_ORIGIN: z.string().default('http://localhost:5173'),
+    LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+    REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
 
-  // PostgreSQL Configuration (Optional in Phase 1 dev if containers are stopped, but validated when provided)
-  DATABASE_URL: z.string().optional(),
-  POSTGRES_HOST: z.string().default('localhost'),
-  POSTGRES_PORT: z.coerce.number().int().default(5432),
-  POSTGRES_DB: z.string().default('autonomous_dev'),
-  POSTGRES_USER: z.string().default('dev_user'),
-  POSTGRES_PASSWORD: z.string().default('dev_password'),
-  POSTGRES_REQUIRED_FOR_READINESS: z
-    .string()
-    .transform((val) => val === 'true')
-    .default('false'),
+    // Authentication Settings
+    JWT_SECRET: z.string().default(DEV_JWT_SECRET),
+    JWT_EXPIRES_IN: z.string().default('7d'),
+    COOKIE_NAME: z.string().default('ae_auth_token'),
+    COOKIE_SECRET: z.string().default('dev-cookie-secret-phase2'),
 
-  // Redis Configuration
-  REDIS_URL: z.string().optional(),
-  REDIS_HOST: z.string().default('localhost'),
-  REDIS_PORT: z.coerce.number().int().default(6379),
-  REDIS_REQUIRED_FOR_READINESS: z
-    .string()
-    .transform((val) => val === 'true')
-    .default('false'),
-});
+    // AI Service integration
+    AI_SERVICE_URL: z.string().url().default('http://localhost:8000'),
+
+    // PostgreSQL Configuration
+    DATABASE_URL: z.string().optional(),
+    POSTGRES_HOST: z.string().default('localhost'),
+    POSTGRES_PORT: z.coerce.number().int().default(5432),
+    POSTGRES_DB: z.string().default('autonomous_dev'),
+    POSTGRES_USER: z.string().default('dev_user'),
+    POSTGRES_PASSWORD: z.string().default('dev_password'),
+    POSTGRES_REQUIRED_FOR_READINESS: z
+      .union([z.boolean(), z.string().transform((val) => val === 'true')])
+      .default(false),
+
+    // Redis Configuration
+    REDIS_URL: z.string().optional(),
+    REDIS_HOST: z.string().default('localhost'),
+    REDIS_PORT: z.coerce.number().int().default(6379),
+    REDIS_REQUIRED_FOR_READINESS: z
+      .union([z.boolean(), z.string().transform((val) => val === 'true')])
+      .default(false),
+  })
+  .superRefine((data, ctx) => {
+    if (data.NODE_ENV === 'production') {
+      if (!data.JWT_SECRET || data.JWT_SECRET === DEV_JWT_SECRET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Production deployments must provide a strong, non-default JWT_SECRET',
+          path: ['JWT_SECRET'],
+        });
+      }
+    }
+  });
 
 export type EnvConfig = z.infer<typeof EnvSchema>;
 
@@ -47,7 +65,17 @@ export function validateConfig(raw: Record<string, unknown> = process.env): EnvC
       .join('\n');
     throw new Error(`[Config Error] Invalid environment configuration:\n${issues}`);
   }
-  return result.data;
+
+  const data = result.data;
+  // Compute default DATABASE_URL and REDIS_URL if not explicitly provided
+  if (!data.DATABASE_URL) {
+    data.DATABASE_URL = `postgresql://${data.POSTGRES_USER}:${data.POSTGRES_PASSWORD}@${data.POSTGRES_HOST}:${data.POSTGRES_PORT}/${data.POSTGRES_DB}`;
+  }
+  if (!data.REDIS_URL) {
+    data.REDIS_URL = `redis://${data.REDIS_HOST}:${data.REDIS_PORT}`;
+  }
+
+  return data;
 }
 
 export const config = validateConfig();

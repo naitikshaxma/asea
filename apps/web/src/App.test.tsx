@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { App } from './App';
 import * as client from './api/client';
 
 describe('Web Application Dashboard Shell', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default to unauthenticated session for baseline tests
+    vi.spyOn(client, 'fetchCurrentUser').mockRejectedValue(new Error('Unauthenticated'));
   });
 
   it('renders application brand, header, and main navigation links', async () => {
@@ -112,5 +114,86 @@ describe('Web Application Dashboard Shell', () => {
       expect(screen.getByText('API Offline')).toBeInTheDocument();
       expect(screen.getByText('API Connection Refused')).toBeInTheDocument();
     });
+  });
+
+  it('renders authenticated workspace session with user badge and workspace tasks', async () => {
+    vi.spyOn(client, 'fetchHealth').mockResolvedValue({
+      status: 'ok',
+      service: '@autonomous-engineer/api',
+      version: '0.1.0',
+      uptime: 50,
+      timestamp: new Date().toISOString(),
+    });
+
+    vi.spyOn(client, 'fetchReadiness').mockResolvedValue({
+      status: 'ready',
+      service: '@autonomous-engineer/api',
+      timestamp: new Date().toISOString(),
+      dependencies: {},
+    });
+
+    vi.spyOn(client, 'fetchCurrentUser').mockResolvedValue({
+      user: {
+        id: 'usr-1',
+        email: 'alice@autonomous.dev',
+        displayName: 'Alice Architect',
+        accountStatus: 'ACTIVE',
+        createdAt: new Date().toISOString(),
+      },
+      workspaces: [
+        {
+          id: 'ws-100',
+          name: 'Core Platform Team',
+          ownerId: 'usr-1',
+          role: 'OWNER',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    vi.spyOn(client, 'fetchWorkspaceTasks').mockResolvedValue({
+      tasks: [
+        {
+          id: 'task-persistent-1',
+          title: 'Memory leak in worker pool',
+          description: 'Investigating high memory utilization',
+          taskType: 'BUG_INVESTIGATION',
+          priority: 'HIGH',
+          status: 'RUNNING',
+          targetBranch: 'main',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      total: 1,
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Alice Architect')).toBeInTheDocument();
+      expect(screen.getAllByText(/Core Platform Team/).length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByText('Memory leak in worker pool')).toBeInTheDocument();
+      expect(screen.getByText('RUNNING')).toBeInTheDocument();
+    });
+  });
+
+  it('opens authentication modal when Sign In button is clicked', async () => {
+    vi.spyOn(client, 'fetchHealth').mockResolvedValue({
+      status: 'ok',
+      service: '@autonomous-engineer/api',
+      version: '0.1.0',
+      uptime: 50,
+      timestamp: new Date().toISOString(),
+    });
+    vi.spyOn(client, 'fetchTasks').mockResolvedValue({ tasks: [], total: 0 });
+
+    render(<App />);
+
+    const signInBtn = await screen.findByRole('button', { name: /Sign In/i });
+    fireEvent.click(signInBtn);
+
+    expect(screen.getByText('Sign In to Workspace')).toBeInTheDocument();
   });
 });

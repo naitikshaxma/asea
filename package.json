@@ -11,9 +11,13 @@
   ],
   "scripts": {
     "dev": "concurrently -n \"api,web\" -c \"blue,magenta\" \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:all": "concurrently -n \"api,worker,web\" -c \"blue,yellow,magenta\" \"npm run dev:api\" \"npm run dev:worker\" \"npm run dev:web\"",
     "dev:api": "npm run dev --workspace=@autonomous-engineer/api",
+    "dev:worker": "npm run dev:worker --workspace=@autonomous-engineer/api",
     "dev:web": "npm run dev --workspace=@autonomous-engineer/web",
     "dev:agent": "python -m uvicorn app.main:app --app-dir services/agent-service --port 8000 --reload",
+    "prisma:generate": "npm run prisma:generate --workspace=@autonomous-engineer/api",
+    "prisma:migrate": "npm run prisma:migrate --workspace=@autonomous-engineer/api",
     "build": "npm run build:contracts && npm run build:api && npm run build:web",
     "build:contracts": "npm run build --workspace=@autonomous-engineer/contracts",
     "build:api": "npm run build --workspace=@autonomous-engineer/api",

@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { Send, AlertCircle, CheckCircle2, Loader2, Info } from 'lucide-react';
 import type { TaskSubmissionRequest, TaskType, TaskPriority } from '@autonomous-engineer/contracts';
+import { submitTask, submitWorkspaceTask } from '../api/client';
 
 interface TaskInputFormProps {
   onTaskCreated: () => void;
+  activeWorkspaceId?: string;
 }
 
-export const TaskInputForm: React.FC<TaskInputFormProps> = ({ onTaskCreated }) => {
+export const TaskInputForm: React.FC<TaskInputFormProps> = ({ onTaskCreated, activeWorkspaceId }) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [taskType, setTaskType] = useState<TaskType>('BUG_INVESTIGATION');
@@ -32,12 +34,16 @@ export const TaskInputForm: React.FC<TaskInputFormProps> = ({ onTaskCreated }) =
         priority,
         repositoryUrl: repositoryUrl ? repositoryUrl : undefined,
         targetBranch,
+        workspaceId: activeWorkspaceId,
       };
 
-      const { submitTask } = await import('../api/client');
-      const result = await submitTask(payload);
+      const result = activeWorkspaceId
+        ? await submitWorkspaceTask(activeWorkspaceId, payload)
+        : await submitTask(payload);
 
-      setSuccessMessage(`Task '${result.id}' successfully registered in the Phase 1 intake queue.`);
+      setSuccessMessage(
+        `Task '${result.id}' successfully persisted in PostgreSQL and queued in BullMQ.`
+      );
       setTitle('');
       setDescription('');
       setRepositoryUrl('');
@@ -56,7 +62,7 @@ export const TaskInputForm: React.FC<TaskInputFormProps> = ({ onTaskCreated }) =
         <div>
           <h2 className="text-base font-semibold text-slate-100">Submit Engineering Task</h2>
           <p className="text-xs text-slate-400">
-            Intake pipeline validated by TypeScript and Zod contract boundary.
+            Durable task management backed by PostgreSQL and BullMQ queues.
           </p>
         </div>
       </div>
@@ -65,10 +71,10 @@ export const TaskInputForm: React.FC<TaskInputFormProps> = ({ onTaskCreated }) =
       <div className="mb-5 p-3.5 rounded-lg bg-blue-950/30 border border-blue-500/20 flex items-start space-x-3 text-xs text-blue-300 leading-relaxed">
         <Info className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
         <div>
-          <span className="font-semibold text-blue-200">Phase 1 Capability Boundary:</span> This form
-          validates your input against the contract specification and records task metadata into the
-          Express API. The automated LLM agent reasoning loop and sandboxed code execution pipeline
-          will be connected in Phase 2.
+          <span className="font-semibold text-blue-200">Phase 2 Asynchronous Pipeline:</span> Submitting
+          this task creates a transactional outbox record, persists the task and run in PostgreSQL,
+          and enqueues background processing via Redis. Real autonomous code editing takes place in
+          Phase 3.
         </div>
       </div>
 
@@ -193,12 +199,12 @@ export const TaskInputForm: React.FC<TaskInputFormProps> = ({ onTaskCreated }) =
             {loading ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Validating &amp; Recording...</span>
+                <span>Persisting &amp; Enqueueing...</span>
               </>
             ) : (
               <>
                 <Send className="w-4 h-4" />
-                <span>Register Task</span>
+                <span>Submit &amp; Enqueue Task</span>
               </>
             )}
           </button>

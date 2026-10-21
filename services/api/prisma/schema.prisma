@@ -1,0 +1,285 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum RepositoryProvider {
+  LOCAL
+  GITHUB
+}
+
+enum RepoConnectionStatus {
+  CONNECTED
+  DISCONNECTED
+  PENDING
+}
+
+enum TaskType {
+  BUG_INVESTIGATION
+  CODE_PATCH
+  TEST_GENERATION
+  CODE_REVIEW
+  CI_DIAGNOSIS
+}
+
+enum TaskPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum TaskStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCEL_REQUESTED
+  CANCELLED
+  NEEDS_ATTENTION
+}
+
+enum WorkflowRunStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum WorkflowStepType {
+  VALIDATE_CONTEXT
+  INSPECT_REPOSITORY
+  GENERATE_SPEC
+  VERIFY_BOUNDARIES
+  SIMULATE_EXECUTION
+}
+
+enum WorkflowStepStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum OutboxStatus {
+  PENDING
+  DISPATCHED
+  FAILED
+}
+
+model User {
+  id                 String                @id @default(uuid())
+  email              String                @unique
+  passwordHash       String
+  displayName        String
+  accountStatus      AccountStatus         @default(ACTIVE)
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  ownedWorkspaces    Workspace[]           @relation("WorkspaceOwner")
+  memberships        WorkspaceMembership[]
+  tasks              Task[]                @relation("TaskCreator")
+  approvalsRequested Approval[]            @relation("ApprovalRequester")
+  approvalsDecided   Approval[]            @relation("ApprovalDecider")
+
+  @@index([email])
+}
+
+model Workspace {
+  id          String                @id @default(uuid())
+  name        String
+  ownerId     String
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  owner       User                  @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members     WorkspaceMembership[]
+  repositories Repository[]
+  tasks       Task[]
+  auditEvents AuditEvent[]
+
+  @@index([ownerId])
+}
+
+model WorkspaceMembership {
+  id          String        @id @default(uuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(MEMBER)
+  createdAt   DateTime      @default(now())
+
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+  @@index([workspaceId])
+}
+
+model Repository {
+  id               String               @id @default(uuid())
+  workspaceId      String
+  name             String
+  provider         RepositoryProvider   @default(LOCAL)
+  repositoryUrl    String
+  defaultBranch    String               @default("main")
+  connectionStatus RepoConnectionStatus @default(CONNECTED)
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  workspace        Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  tasks            Task[]
+
+  @@index([workspaceId])
+}
+
+model Task {
+  id                String         @id @default(uuid())
+  workspaceId       String
+  repositoryId      String?
+  creatorId         String
+  title             String
+  description       String
+  taskType          TaskType       @default(BUG_INVESTIGATION)
+  status            TaskStatus     @default(QUEUED)
+  priority          TaskPriority   @default(NORMAL)
+  repositoryUrl     String?
+  targetBranch      String         @default("main")
+  idempotencyKey    String?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  failureCode       String?
+  failureReason     String?
+  executionMetadata Json?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  workspace         Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  repository        Repository?    @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
+  creator           User           @relation("TaskCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  runs              WorkflowRun[]
+  approvals         Approval[]
+
+  @@index([workspaceId])
+  @@index([status])
+  @@index([creatorId])
+  @@index([idempotencyKey])
+}
+
+model WorkflowRun {
+  id             String            @id @default(uuid())
+  taskId         String
+  attemptNumber  Int               @default(1)
+  status         WorkflowRunStatus @default(QUEUED)
+  workerId       String?
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  errorSummary   String?
+  configMetadata Json?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  task           Task              @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  steps          WorkflowStep[]
+
+  @@index([taskId])
+  @@index([status])
+}
+
+model WorkflowStep {
+  id             String             @id @default(uuid())
+  workflowRunId  String
+  stepType       WorkflowStepType
+  stepStatus     WorkflowStepStatus @default(PENDING)
+  stepOrder      Int
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  resultMetadata Json?
+  failureSummary String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  workflowRun    WorkflowRun        @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+  approvals      Approval[]
+
+  @@index([workflowRunId])
+  @@index([stepStatus])
+}
+
+model Approval {
+  id             String         @id @default(uuid())
+  taskId         String
+  workflowStepId String?
+  status         ApprovalStatus @default(PENDING)
+  requestedById  String
+  decidedById    String?
+  reason         String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  task           Task           @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  workflowStep   WorkflowStep?  @relation(fields: [workflowStepId], references: [id], onDelete: SetNull)
+  requester      User           @relation("ApprovalRequester", fields: [requestedById], references: [id], onDelete: Cascade)
+  decider        User?          @relation("ApprovalDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@index([taskId])
+  @@index([status])
+}
+
+model AuditEvent {
+  id           String     @id @default(uuid())
+  workspaceId  String?
+  actorId      String?
+  eventType    String
+  resourceType String
+  resourceId   String?
+  metadata     Json?
+  requestId    String?
+  timestamp    DateTime   @default(now())
+
+  workspace    Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([actorId])
+  @@index([eventType])
+  @@index([timestamp])
+}
+
+model OutboxEvent {
+  id            String       @id @default(uuid())
+  aggregateType String
+  aggregateId   String
+  eventType     String
+  payload       Json
+  status        OutboxStatus @default(PENDING)
+  retryCount    Int          @default(0)
+  createdAt     DateTime     @default(now())
+  dispatchedAt  DateTime?
+
+  @@index([status])
+  @@index([createdAt])
+}

@@ -17,14 +17,76 @@ export type TaskPriority = z.infer<typeof TaskPriorityEnum>;
 export const TaskStatusEnum = z.enum([
   'PENDING',
   'QUEUED',
+  'RUNNING',
   'ANALYZING',
   'EXECUTING',
+  'COMPLETED',
+  'FAILED',
+  'CANCEL_REQUESTED',
+  'CANCELLED',
+  'NEEDS_ATTENTION',
+]);
+
+export type TaskStatus = z.infer<typeof TaskStatusEnum>;
+
+export const WorkflowRunStatusEnum = z.enum([
+  'QUEUED',
+  'RUNNING',
   'COMPLETED',
   'FAILED',
   'CANCELLED',
 ]);
 
-export type TaskStatus = z.infer<typeof TaskStatusEnum>;
+export type WorkflowRunStatus = z.infer<typeof WorkflowRunStatusEnum>;
+
+export const WorkflowStepStatusEnum = z.enum([
+  'PENDING',
+  'RUNNING',
+  'COMPLETED',
+  'FAILED',
+  'SKIPPED',
+]);
+
+export type WorkflowStepStatus = z.infer<typeof WorkflowStepStatusEnum>;
+
+export const WorkflowStepTypeEnum = z.enum([
+  'VALIDATE_CONTEXT',
+  'INSPECT_REPOSITORY',
+  'GENERATE_SPEC',
+  'VERIFY_BOUNDARIES',
+  'SIMULATE_EXECUTION',
+]);
+
+export type WorkflowStepType = z.infer<typeof WorkflowStepTypeEnum>;
+
+export const WorkflowStepResponseSchema = z.object({
+  id: RequestIdSchema,
+  workflowRunId: RequestIdSchema,
+  stepType: WorkflowStepTypeEnum,
+  stepStatus: WorkflowStepStatusEnum,
+  stepOrder: z.number().int().nonnegative(),
+  startedAt: IsoTimestampSchema.optional(),
+  finishedAt: IsoTimestampSchema.optional(),
+  resultMetadata: z.record(z.string(), z.unknown()).optional(),
+  failureSummary: z.string().optional(),
+});
+
+export type WorkflowStepResponse = z.infer<typeof WorkflowStepResponseSchema>;
+
+export const WorkflowRunResponseSchema = z.object({
+  id: RequestIdSchema,
+  taskId: RequestIdSchema,
+  attemptNumber: z.number().int().positive(),
+  status: WorkflowRunStatusEnum,
+  workerId: z.string().optional(),
+  startedAt: IsoTimestampSchema.optional(),
+  finishedAt: IsoTimestampSchema.optional(),
+  errorSummary: z.string().optional(),
+  configMetadata: z.record(z.string(), z.unknown()).optional(),
+  steps: z.array(WorkflowStepResponseSchema).optional(),
+});
+
+export type WorkflowRunResponse = z.infer<typeof WorkflowRunResponseSchema>;
 
 export const TaskSubmissionRequestSchema = z.object({
   title: z
@@ -43,13 +105,19 @@ export const TaskSubmissionRequestSchema = z.object({
     .optional()
     .or(z.literal(''))
     .transform((val) => (val === '' ? undefined : val)),
+  repositoryId: z.string().optional(),
+  workspaceId: z.string().optional(),
   targetBranch: z.string().max(100).optional().default('main'),
+  idempotencyKey: z.string().max(128).optional(),
 });
 
 export type TaskSubmissionRequest = z.infer<typeof TaskSubmissionRequestSchema>;
 
 export const TaskResponseSchema = z.object({
   id: RequestIdSchema,
+  workspaceId: z.string().optional(),
+  repositoryId: z.string().optional(),
+  creatorId: z.string().optional(),
   title: z.string(),
   description: z.string(),
   taskType: TaskTypeEnum,
@@ -57,8 +125,13 @@ export const TaskResponseSchema = z.object({
   status: TaskStatusEnum,
   repositoryUrl: z.string().optional(),
   targetBranch: z.string().optional(),
+  idempotencyKey: z.string().optional(),
   createdAt: IsoTimestampSchema,
   updatedAt: IsoTimestampSchema,
+  startedAt: IsoTimestampSchema.optional(),
+  completedAt: IsoTimestampSchema.optional(),
+  failureCode: z.string().optional(),
+  failureReason: z.string().optional(),
   executionMetadata: z
     .object({
       workerId: z.string().optional(),
@@ -67,6 +140,7 @@ export const TaskResponseSchema = z.object({
       note: z.string().optional(),
     })
     .optional(),
+  runs: z.array(WorkflowRunResponseSchema).optional(),
 });
 
 export type TaskResponse = z.infer<typeof TaskResponseSchema>;
@@ -77,3 +151,12 @@ export const TaskListResponseSchema = z.object({
 });
 
 export type TaskListResponse = z.infer<typeof TaskListResponseSchema>;
+
+export const CancelTaskResponseSchema = z.object({
+  success: z.boolean(),
+  taskId: RequestIdSchema,
+  status: TaskStatusEnum,
+  message: z.string(),
+});
+
+export type CancelTaskResponse = z.infer<typeof CancelTaskResponseSchema>;

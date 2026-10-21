@@ -2,6 +2,9 @@ import { createApp } from './app.js';
 import { config } from './config.js';
 import { logger } from './logger.js';
 import { closeDbPool } from './services/db.js';
+import { disconnectPrisma } from './services/prisma.js';
+import { closeTaskQueue } from './services/queueService.js';
+import { startOutboxDispatcher, stopOutboxDispatcher } from './services/outboxDispatcher.js';
 
 const app = createApp();
 
@@ -13,18 +16,25 @@ const server = app.listen(config.PORT, config.HOST, () => {
     healthEndpoint: `http://${config.HOST === '0.0.0.0' ? 'localhost' : config.HOST}:${config.PORT}/health`,
     readinessEndpoint: `http://${config.HOST === '0.0.0.0' ? 'localhost' : config.HOST}:${config.PORT}/ready`,
   });
+
+  // Start transactional outbox polling loop
+  startOutboxDispatcher(3000);
 });
 
 // Graceful shutdown handling
 function gracefulShutdown(signal: string) {
   logger.info(`Received ${signal}. Gracefully shutting down HTTP server...`);
+  stopOutboxDispatcher();
+
   server.close(async () => {
     logger.info('HTTP server closed.');
     try {
+      await closeTaskQueue();
+      await disconnectPrisma();
       await closeDbPool();
-      logger.info('Database pool closed.');
+      logger.info('Database, queue, and pool resources cleanly disconnected.');
     } catch (err) {
-      logger.error('Error closing database pool during shutdown', { error: String(err) });
+      logger.error('Error closing resources during shutdown', { error: String(err) });
     }
     process.exit(0);
   });

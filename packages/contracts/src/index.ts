@@ -2,3 +2,6 @@ export * from './request.js';
 export * from './errors.js';
 export * from './health.js';
 export * from './tasks.js';
+export * from './auth.js';
+export * from './workspaces.js';
+export * from './repositories.js';

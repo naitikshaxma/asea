@@ -1,11 +1,11 @@
-# Local Development Guide
+# Local Development Guide (Phase 2)
 
 ## 1. Prerequisites
 
 Ensure the following tools are installed:
 - **Node.js**: `v24.x` or later (tested on `v24.12.0`)
 - **npm**: `v11.x` or later (tested on `11.7.0`)
-- **Python**: `3.12.x` or later
+- **Python**: `3.12.x` or later (tested on `3.12.10`)
 - **Docker & Docker Compose**: `v28.x` or later (Docker Desktop / engine)
 - **Git**: `2.x` or later
 
@@ -19,7 +19,7 @@ Ensure the following tools are installed:
 cp .env.example .env
 ```
 
-Review the values in `.env`. The defaults are safe for local development out-of-the-box.
+Review `.env`. It contains safe development secrets (`JWT_SECRET`, `DATABASE_URL`, `REDIS_URL`).
 
 ### Step 2: Install Node Monorepo Dependencies
 ```bash
@@ -27,26 +27,26 @@ npm install
 ```
 This installs dependencies across `packages/contracts`, `services/api`, and `apps/web`.
 
-### Step 3: Setup Python Virtual Environment (Agent Service)
+### Step 3: Generate Prisma Client & Run Migrations
 ```bash
-# From workspace root:
-cd services/agent-service
+# Generate the Prisma Client
+npm run prisma:generate
 
-# Create virtual environment
+# Apply migrations to PostgreSQL (requires docker:up or local Postgres)
+npm run prisma:migrate
+```
+
+### Step 4: Setup Python Virtual Environment (Agent Service)
+```bash
+cd services/agent-service
 python -m venv .venv
 
-# Activate virtual environment
-# Windows (PowerShell):
-.venv\Scripts\Activate.ps1
-# Windows (CMD):
-.venv\Scripts\activate.bat
-# Linux/macOS:
+# On Windows:
+.venv\Scripts\activate
+# On Linux/macOS:
 source .venv/bin/activate
 
-# Install Python dependencies
 pip install -r requirements.txt
-
-# Return to monorepo root
 cd ../..
 ```
 
@@ -55,7 +55,6 @@ cd ../..
 ## 3. Starting Services
 
 ### Option A: Local Dev Infrastructure (PostgreSQL & Redis)
-To spin up development containers:
 ```bash
 # Start PostgreSQL (port 5432) and Redis (port 6379)
 npm run docker:up
@@ -63,23 +62,33 @@ npm run docker:up
 # Check container status
 docker compose ps
 
-# View logs
-npm run docker:logs
-
 # Stop containers
 npm run docker:down
 ```
 
-### Option B: Start Node API and Web Dashboard
+### Option B: Start Full Development Environment (API + Worker + Frontend)
 ```bash
-npm run dev
+npm run dev:all
 ```
-- API will start on: `http://localhost:4000`
-- Web Dashboard will start on: `http://localhost:5173`
+This runs three processes concurrently:
+- **Express API**: `http://localhost:4000`
+- **BullMQ Worker**: Background job consumer
+- **React Frontend**: `http://localhost:5173`
+
+Or start them individually:
+```bash
+# Start API only
+npm run dev:api
+
+# Start Worker only
+npm run dev:worker
+
+# Start Web only
+npm run dev:web
+```
 
 ### Option C: Start Python Agent Service
 ```bash
-# Ensure your Python virtual environment is activated:
 npm run dev:agent
 # Runs on: http://localhost:8000
 ```
@@ -90,62 +99,66 @@ npm run dev:agent
 
 ### Run All Tests
 ```bash
-# Run TypeScript tests (API + Web)
+# Run TypeScript tests (32 API tests + 6 Web tests)
 npm test
 
-# Run Python Pytest tests
+# Run Python Pytest tests (5 agent tests)
 npm run test:python
 
-# Run All (TypeScript + Python)
+# Run Everything
 npm run test:all
 ```
 
-### Type Checking & Linting
+### Type Checking
 ```bash
-# Type check all workspaces
 npm run typecheck
-
-# Alias for linting
-npm run lint
 ```
 
-### Build Production Bundles
+### Production Build
 ```bash
 npm run build
 ```
 
 ---
 
-## 5. Service URLs and Health Endpoints
+## 5. Phase 2 API Endpoints
 
-| Service | Local URL | Health Endpoint | Readiness Endpoint |
-|---|---|---|---|
-| **Web Dashboard** | `http://localhost:5173` | — | — |
-| **Express API** | `http://localhost:4000` | `http://localhost:4000/health` | `http://localhost:4000/ready` |
-| **Agent Service** | `http://localhost:8000` | `http://localhost:8000/health` | `http://localhost:8000/ready` |
-| **PostgreSQL** | `127.0.0.1:5432` | Container healthcheck (`pg_isready`) | Tested via API `/ready` |
-| **Redis** | `127.0.0.1:6379` | Container healthcheck (`redis-cli ping`) | Tested via API `/ready` |
+### Authentication
+- `POST /api/v1/auth/register` — Register new user & auto-create workspace
+- `POST /api/v1/auth/login` — Authenticate and obtain JWT / HttpOnly cookie
+- `POST /api/v1/auth/logout` — Invalidate session cookie
+- `GET /api/v1/auth/me` — Retrieve profile & accessible workspaces
+
+### Workspaces & Membership
+- `GET /api/v1/workspaces` — List workspaces for authenticated user
+- `POST /api/v1/workspaces` — Create new workspace
+- `GET /api/v1/workspaces/:workspaceId` — Workspace details (requires membership)
+- `PATCH /api/v1/workspaces/:workspaceId` — Update workspace name (requires ADMIN/OWNER)
+
+### Repositories
+- `GET /api/v1/workspaces/:workspaceId/repositories` — List workspace repositories
+- `POST /api/v1/workspaces/:workspaceId/repositories` — Attach repository record
+- `GET /api/v1/workspaces/:workspaceId/repositories/:repositoryId` — Repository details
+
+### Tasks & Execution History
+- `POST /api/v1/workspaces/:workspaceId/tasks` — Submit task & enqueue workflow
+- `GET /api/v1/workspaces/:workspaceId/tasks` — List tasks with status/type filters
+- `GET /api/v1/workspaces/:workspaceId/tasks/:taskId` — Task details
+- `POST /api/v1/workspaces/:workspaceId/tasks/:taskId/cancel` — Cancel active task
+- `GET /api/v1/workspaces/:workspaceId/tasks/:taskId/runs` — Task workflow runs and steps
 
 ---
 
 ## 6. Troubleshooting
 
-### Port 5432 or 6379 Already in Use
-If another Postgres or Redis instance is running locally, modify the ports in `.env`:
-```env
-POSTGRES_PORT=5433
-REDIS_PORT=6380
-```
-Then restart Docker Compose: `npm run docker:up`.
+### Database Authentication Failed
+If Docker Postgres is not running or credentials differ:
+- Check container logs: `docker compose logs postgres`
+- Verify that `.env` has:
+  ```env
+  DATABASE_URL=postgresql://dev_user:dev_password@localhost:5432/autonomous_dev
+  ```
 
-### API Reports `not_ready`
-- Check whether Docker containers are running: `docker compose ps`.
-- Check if `POSTGRES_REQUIRED_FOR_READINESS` is set to `true` in your `.env`. In dev mode, set it to `false` if you want the API to remain in degraded mode when containers are stopped.
-
-### Python ModuleNotFoundError
-Ensure you have activated the virtual environment before running pytest:
-```bash
-cd services/agent-service
-.venv\Scripts\activate
-pytest
-```
+### Redis Connection Error in Worker
+- Check Redis container: `docker compose ps`
+- The API gracefully operates in mock fallback mode if Redis is down, but the background worker requires an accessible Redis instance.
