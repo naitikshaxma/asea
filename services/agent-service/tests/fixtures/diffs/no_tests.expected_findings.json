@@ -1,0 +1,9 @@
+[
+  {
+    "rule_id": "ASEA-PY-TEST-GAP",
+    "category": "test_gap",
+    "severity": "medium",
+    "file": "services/projects.py",
+    "line": 21
+  }
+]

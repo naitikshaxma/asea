@@ -1,0 +1,2 @@
+# Fixture diffs must keep exact bytes (hunk headers, LF line endings)
+* text eol=lf

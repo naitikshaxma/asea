@@ -1,0 +1,9 @@
+[
+  {
+    "rule_id": "ASEA-PY-ROUTE-NO-AUTH",
+    "category": "static",
+    "severity": "high",
+    "file": "routes/projects.py",
+    "line": 25
+  }
+]

@@ -205,10 +205,10 @@ npm run test:api
 # Run Web test suite individually (11 tests):
 npm run test:web
 
-# Run Python Pytest test suite (11 agent tests):
+# Run Python Pytest test suite (18 agent tests):
 npm run test:python
 
-# Run All (TypeScript + Python = 112 total automated tests):
+# Run All (TypeScript + Python = 119 total automated tests):
 npm run test:all
 
 # Run type checking across all TypeScript workspaces:

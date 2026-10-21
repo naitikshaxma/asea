@@ -1,0 +1,18 @@
+diff --git a/services/projects.py b/services/projects.py
+index 3f64d9f..33cd63b 100644
+--- a/services/projects.py
++++ b/services/projects.py
+@@ -16,3 +16,13 @@ def create_project(owner_id, name):
+             (owner_id, name),
+         )
+         return {"id": cursor.lastrowid, "name": name}
++
++
++def archive_project(owner_id, project_id):
++    with get_connection() as conn:
++        cursor = conn.cursor()
++        cursor.execute(
++            "UPDATE projects SET archived = 1 WHERE id = ? AND owner_id = ?",
++            (project_id, owner_id),
++        )
++        return cursor.rowcount == 1

@@ -1,0 +1,48 @@
+diff --git a/routes/projects.py b/routes/projects.py
+index 4eae8c7..d203ee1 100644
+--- a/routes/projects.py
++++ b/routes/projects.py
+@@ -19,3 +19,11 @@ def create_project():
+     payload = validate_payload(request.get_json(), required=["name"])
+     project = project_service.create_project(g.user["id"], payload["name"])
+     return jsonify(project), 201
++
++
++@bp.patch("/<int:project_id>")
++@login_required
++def rename_project(project_id):
++    payload = validate_payload(request.get_json(), required=["name"])
++    project = project_service.rename_project(g.user["id"], project_id, payload["name"])
++    return jsonify(project)
+diff --git a/services/projects.py b/services/projects.py
+index 3f64d9f..13ddc42 100644
+--- a/services/projects.py
++++ b/services/projects.py
+@@ -16,3 +16,13 @@ def create_project(owner_id, name):
+             (owner_id, name),
+         )
+         return {"id": cursor.lastrowid, "name": name}
++
++
++def rename_project(owner_id, project_id, name):
++    with get_connection() as conn:
++        cursor = conn.cursor()
++        cursor.execute(
++            "UPDATE projects SET name = ? WHERE id = ? AND owner_id = ?",
++            (name, project_id, owner_id),
++        )
++        return {"id": project_id, "name": name}
+diff --git a/tests/test_projects.py b/tests/test_projects.py
+index 1ec1041..7d4790a 100644
+--- a/tests/test_projects.py
++++ b/tests/test_projects.py
+@@ -23,3 +23,9 @@ def test_list_projects_filters_by_owner(db):
+     project_service.create_project(1, "Apollo")
+     project_service.create_project(2, "Gemini")
+     assert project_service.list_projects(1) == [{"id": 1, "name": "Apollo"}]
++
++
++def test_rename_project_updates_name(db):
++    project_service.create_project(1, "Apollo")
++    assert project_service.rename_project(1, 1, "Artemis") == {"id": 1, "name": "Artemis"}
++    assert project_service.list_projects(1) == [{"id": 1, "name": "Artemis"}]

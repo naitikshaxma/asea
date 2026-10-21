@@ -1,0 +1,14 @@
+diff --git a/routes/projects.py b/routes/projects.py
+index 4eae8c7..f1ace46 100644
+--- a/routes/projects.py
++++ b/routes/projects.py
+@@ -19,3 +19,9 @@ def create_project():
+     payload = validate_payload(request.get_json(), required=["name"])
+     project = project_service.create_project(g.user["id"], payload["name"])
+     return jsonify(project), 201
++
++
++@bp.get("/export")
++def export_projects():
++    owner_id = request.args.get("owner_id", type=int)
++    return jsonify(project_service.list_projects(owner_id))
