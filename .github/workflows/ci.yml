@@ -26,6 +26,14 @@ jobs:
       - name: Install Monorepo Dependencies
         run: npm ci
 
+      # The API imports runtime schemas from packages/contracts/dist, and
+      # typecheck/tests need the generated Prisma client.
+      - name: Build Shared Contracts
+        run: npm run build:contracts
+
+      - name: Generate Prisma Client
+        run: npm run prisma:generate
+
       - name: Run Monorepo Type Checks
         run: npm run typecheck
 

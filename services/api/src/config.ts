@@ -1,8 +1,12 @@
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import dotenv from 'dotenv';
 
-// Load .env if present
-dotenv.config();
+// Load the monorepo-root .env if present. npm workspace scripts run with
+// cwd = services/api, so a cwd-relative lookup would miss it. The path is
+// the same from src/ and dist/.
+export const ROOT_ENV_PATH = fileURLToPath(new URL('../../../.env', import.meta.url));
+dotenv.config({ path: ROOT_ENV_PATH });
 
 const DEV_JWT_SECRET = 'dev-insecure-jwt-secret-phase2-do-not-use-in-prod-xyz';
 

@@ -97,20 +97,26 @@ Before setting up, ensure you have:
 cp .env.example .env
 ```
 
-### 2. Install Node Dependencies
+The API and the Prisma CLI scripts both read this repo-root `.env`.
+
+### 2. Install Node Dependencies, Build Contracts & Generate the Prisma Client
 ```bash
 npm install
+
+# Required before typecheck, tests or dev servers: the API imports runtime
+# schemas from packages/contracts/dist, which is not committed.
+npm run build:contracts
+
+# Generate the Prisma Client (no database needed):
+npm run prisma:generate
 ```
 
-### 3. Start PostgreSQL & Redis, Generate Database Client & Apply Migrations
+### 3. Start PostgreSQL & Redis and Apply Migrations
 ```bash
 # Start PostgreSQL 16 and Redis 7 (the Postgres container starts with an empty database):
 npm run docker:up
 
-# Generate the Prisma Client:
-npm run prisma:generate
-
-# Create or upgrade the schema:
+# Create or upgrade the schema (uses DATABASE_URL from the root .env):
 npm run prisma:migrate
 ```
 
@@ -186,6 +192,8 @@ npm run dev:agent
 ---
 
 ## 9. Automated Testing Commands
+
+Typecheck and the TypeScript test suites need step 2 of the setup (contracts built, Prisma Client generated). They do not need a running database.
 
 ```bash
 # Run all Node.js and Frontend tests (61 API tests + 8 Web tests = 69 tests):

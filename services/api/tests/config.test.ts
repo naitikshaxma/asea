@@ -1,7 +1,17 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { validateConfig } from '../src/config.js';
+import { validateConfig, ROOT_ENV_PATH } from '../src/config.js';
 
 describe('Environment Configuration Validation', () => {
+  it('loads .env from the monorepo root, not the workspace cwd', () => {
+    expect(path.basename(ROOT_ENV_PATH)).toBe('.env');
+    const rootPackageJson = JSON.parse(
+      fs.readFileSync(path.join(path.dirname(ROOT_ENV_PATH), 'package.json'), 'utf-8')
+    );
+    expect(rootPackageJson.name).toBe('autonomous-engineer-monorepo');
+  });
+
   it('parses valid environment configuration with defaults', () => {
     const config = validateConfig({});
     expect(config.NODE_ENV).toBe('development');

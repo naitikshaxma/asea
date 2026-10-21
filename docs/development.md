@@ -27,12 +27,17 @@ npm install
 ```
 This installs dependencies across `packages/contracts`, `services/api`, and `apps/web`.
 
-### Step 3: Generate Prisma Client & Run Migrations
+### Step 3: Build Contracts, Generate Prisma Client & Run Migrations
 ```bash
-# Generate the Prisma Client
+# Required before typecheck, tests or dev servers (the API imports packages/contracts/dist)
+npm run build:contracts
+
+# Generate the Prisma Client (no database needed)
 npm run prisma:generate
 
-# Apply migrations to PostgreSQL (requires docker:up or local Postgres)
+# Apply migrations to PostgreSQL (requires docker:up or local Postgres).
+# Prisma migrations are the single source of truth for the schema.
+# Uses DATABASE_URL from the repo-root .env.
 npm run prisma:migrate
 ```
 
