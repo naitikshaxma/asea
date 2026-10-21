@@ -23,7 +23,8 @@ authRouter.post('/register', async (req, res, next) => {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    res.status(201).json({ user, token });
+    // The JWT is delivered only in the HttpOnly cookie, never in the body (S3)
+    res.status(201).json({ user });
   } catch (err) {
     next(err);
   }
@@ -41,7 +42,7 @@ authRouter.post('/login', async (req, res, next) => {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    res.status(200).json({ user, token });
+    res.status(200).json({ user });
   } catch (err) {
     next(err);
   }

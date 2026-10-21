@@ -80,7 +80,7 @@ graph TD
 - **Responsibilities**:
   - User registration with automatic personal workspace provisioning.
   - Timing-safe authentication and bcrypt password hashing (cost factor 12).
-  - JWT issuance in both `Authorization: Bearer` and secure HttpOnly cookies.
+  - JWT issuance in a secure HttpOnly cookie only (never in the response body); `Authorization: Bearer` is also accepted.
   - Workspace membership verification with role hierarchy (`OWNER` > `ADMIN` > `MEMBER`).
   - Atomic database transactions for task, workflow run, and outbox event creation.
   - Cross-workspace data isolation preventing tenant data leakage.
@@ -193,7 +193,7 @@ The Repository Intelligence Engine provides deterministic codebase comprehension
 
 ### 5.1 Snapshot Collector Security Pipeline
 1. **Path Canonicalization**: `path.resolve` and `fs.realpathSync` eliminate directory traversal (`../`), null bytes (`\0`), and path separators spoofing.
-2. **Allowed Roots Jail**: If `ALLOWED_REPO_ROOTS` is set, verifies target repository resides inside an authorized directory hierarchy.
+2. **Allowed Roots Jail**: `ALLOWED_REPO_ROOTS` is required (analysis returns 503 without it). The repository URL must be an absolute local path inside an authorized directory hierarchy; remote URLs are rejected with 400.
 3. **Symlink Containment**: Resolves real path of symlinks; if target escapes repo root, the entry is skipped with reason `SYMLINK_ESCAPE`.
 4. **Zero Secret Leakage**: File paths matching secret patterns (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `credentials.json`, `*secret*`, `*token*`) are strictly excluded.
 5. **Binary Sniffing**: Inspects the first 1KB of each file for null bytes. Binary files are tracked in inventory as `BINARY` but skipped from AST summarization.

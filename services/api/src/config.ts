@@ -48,7 +48,9 @@ export const EnvSchema = z
       .default(false),
 
     // Repository Intelligence Engine (Phase 3)
-    ALLOWED_REPO_ROOTS: z.string().default(process.cwd()),
+    // Comma-separated absolute directories that repository analysis may read.
+    // No default: analysis is refused until this is set explicitly.
+    ALLOWED_REPO_ROOTS: z.string().optional(),
     ANALYSIS_MAX_FILES: z.coerce.number().int().positive().default(5000),
     ANALYSIS_MAX_FILE_SIZE_BYTES: z.coerce.number().int().positive().default(1048576), // 1MB
     ANALYSIS_MAX_TOTAL_BYTES: z.coerce.number().int().positive().default(52428800), // 50MB

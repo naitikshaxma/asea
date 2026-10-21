@@ -1,8 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../src/app.js';
 import { prisma } from '../../src/services/prisma.js';
 import { generateToken } from '../../src/services/authService.js';
+import { config } from '../../src/config.js';
 
 describe('Repository Intelligence API & Security Boundary', () => {
   const app = createApp();
@@ -28,9 +32,32 @@ describe('Repository Intelligence API & Security Boundary', () => {
     updatedAt: new Date(),
   };
 
+  const originalAllowedRoots = config.ALLOWED_REPO_ROOTS;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    // Analysis requires an explicit allow-list; the mock repo lives in the test cwd
+    config.ALLOWED_REPO_ROOTS = process.cwd();
   });
+
+  afterEach(() => {
+    config.ALLOWED_REPO_ROOTS = originalAllowedRoots;
+  });
+
+  function mockAliasMembershipAndRepo(repositoryUrl: string) {
+    vi.spyOn(prisma.workspaceMembership, 'findUnique').mockResolvedValue({
+      id: 'mem-alice',
+      workspaceId,
+      userId: userAlice.id,
+      role: 'MEMBER',
+      createdAt: new Date(),
+    } as any);
+    vi.spyOn(prisma.repository, 'findFirst').mockResolvedValue({
+      ...mockRepo,
+      repositoryUrl,
+    } as any);
+    return vi.spyOn(prisma.repositoryAnalysis, 'create');
+  }
 
   it('rejects unauthenticated requests to analyze repository with 401', async () => {
     const res = await request(app).post(
@@ -203,50 +230,66 @@ describe('Repository Intelligence API & Security Boundary', () => {
     expect(res.body.results[0].score).toBeGreaterThan(0);
   });
 
-  it('regression security test: unauthenticated GET /api/v1/tasks does NOT expose private workspace tasks', async () => {
-    vi.spyOn(prisma.task, 'findMany').mockResolvedValue([
-      {
-        id: 'task-confidential-99',
-        workspaceId: 'private-client-ws',
-        title: 'Confidential Proprietary Security Audit',
-        description: 'Internal secret analysis',
-        taskType: 'BUG_INVESTIGATION',
-        status: 'RUNNING',
-        priority: 'URGENT',
-        targetBranch: 'main',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-    ] as any);
+  // S2/B6 regression: no fallback to the server's working directory
+  it.each([
+    ['a GitHub URL', 'https://github.com/example/repo', /not an absolute local path/],
+    ['a relative path', './services/api', /not an absolute local path/],
+    ['a missing local path', path.join(process.cwd(), 'does-not-exist-xyz'), /does not exist/],
+  ])('analyze rejects %s with 400 and records no analysis', async (_label, repositoryUrl, message) => {
+    const createSpy = mockAliasMembershipAndRepo(repositoryUrl);
 
-    // Call without authorization header
-    const res = await request(app).get('/api/v1/tasks');
+    const res = await request(app)
+      .post(`/api/v1/workspaces/${workspaceId}/repositories/${repoId}/analyze`)
+      .set('Authorization', `Bearer ${tokenAlice}`);
 
-    expect(res.status).toBe(200);
-    // Must NOT contain the confidential task
-    const taskIds = res.body.tasks.map((t: any) => t.id);
-    expect(taskIds).not.toContain('task-confidential-99');
-    // Only safe demo bootstrap task returned
-    expect(taskIds).toContain('task-demo-01');
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('BAD_REQUEST');
+    expect(res.body.error.message).toMatch(message);
+    expect(createSpy).not.toHaveBeenCalled();
   });
 
-  it('regression security test: unauthenticated GET /api/v1/tasks/:id for private task returns 401', async () => {
-    vi.spyOn(prisma.task, 'findUnique').mockResolvedValue({
-      id: 'task-confidential-99',
-      workspaceId: 'private-client-ws',
-      title: 'Confidential Task',
-      description: 'Secret data',
-      taskType: 'BUG_INVESTIGATION',
-      status: 'RUNNING',
-      priority: 'HIGH',
-      targetBranch: 'main',
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    } as any);
+  it('analyze rejects a local path outside ALLOWED_REPO_ROOTS with 400', async () => {
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ae-outside-'));
+    try {
+      const createSpy = mockAliasMembershipAndRepo(outsideDir);
 
-    const res = await request(app).get('/api/v1/tasks/task-confidential-99');
+      const res = await request(app)
+        .post(`/api/v1/workspaces/${workspaceId}/repositories/${repoId}/analyze`)
+        .set('Authorization', `Bearer ${tokenAlice}`);
 
-    expect(res.status).toBe(401);
-    expect(res.body.error.code).toBe('UNAUTHORIZED');
+      expect(res.status).toBe(400);
+      expect(res.body.error.message).toMatch(/outside the configured allowed roots/);
+      expect(createSpy).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it('analyze returns 503 when ALLOWED_REPO_ROOTS is not configured', async () => {
+    config.ALLOWED_REPO_ROOTS = undefined;
+    const createSpy = mockAliasMembershipAndRepo(process.cwd());
+
+    const res = await request(app)
+      .post(`/api/v1/workspaces/${workspaceId}/repositories/${repoId}/analyze`)
+      .set('Authorization', `Bearer ${tokenAlice}`);
+
+    expect(res.status).toBe(503);
+    expect(res.body.error.code).toBe('SERVICE_UNAVAILABLE');
+    expect(res.body.error.message).toMatch(/ALLOWED_REPO_ROOTS/);
+    expect(createSpy).not.toHaveBeenCalled();
+  });
+
+  it('relevant-files does not fall back to cwd analysis for a GitHub repository', async () => {
+    const createSpy = mockAliasMembershipAndRepo('https://github.com/example/repo');
+    vi.spyOn(prisma.repositoryAnalysis, 'findFirst').mockResolvedValue(null);
+
+    const res = await request(app)
+      .post(`/api/v1/workspaces/${workspaceId}/repositories/${repoId}/relevant-files`)
+      .set('Authorization', `Bearer ${tokenAlice}`)
+      .send({ taskDescription: 'Fix authentication middleware', limit: 5 });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toMatch(/not an absolute local path/);
+    expect(createSpy).not.toHaveBeenCalled();
   });
 });

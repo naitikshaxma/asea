@@ -23,39 +23,13 @@ import type {
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
-let authToken: string | null = null;
-try {
-  authToken = sessionStorage.getItem('ae_auth_token');
-} catch {
-  // Ignore in SSR/testing environment
-}
-
-export function setAuthToken(token: string | null) {
-  authToken = token;
-  try {
-    if (token) {
-      sessionStorage.setItem('ae_auth_token', token);
-    } else {
-      sessionStorage.removeItem('ae_auth_token');
-    }
-  } catch {
-    // Ignore in SSR/testing environment
-  }
-}
-
-export function getAuthToken(): string | null {
-  return authToken;
-}
-
+// Authentication relies solely on the HttpOnly session cookie set by the API
+// (sent via `credentials: 'include'`); the token is never readable from JS.
 function getHeaders(customHeaders: Record<string, string> = {}): Record<string, string> {
-  const headers: Record<string, string> = {
+  return {
     'Content-Type': 'application/json',
     ...customHeaders,
   };
-  if (authToken) {
-    headers['Authorization'] = `Bearer ${authToken}`;
-  }
-  return headers;
 }
 
 async function handleResponse<T>(res: Response, fallbackError: string): Promise<T> {
@@ -106,11 +80,7 @@ export async function registerUser(payload: RegisterRequest): Promise<AuthRespon
     body: JSON.stringify(payload),
   });
 
-  const data = await handleResponse<AuthResponse>(res, 'Registration failed');
-  if (data.token) {
-    setAuthToken(data.token);
-  }
-  return data;
+  return handleResponse<AuthResponse>(res, 'Registration failed');
 }
 
 export async function loginUser(payload: LoginRequest): Promise<AuthResponse> {
@@ -121,23 +91,15 @@ export async function loginUser(payload: LoginRequest): Promise<AuthResponse> {
     body: JSON.stringify(payload),
   });
 
-  const data = await handleResponse<AuthResponse>(res, 'Login failed');
-  if (data.token) {
-    setAuthToken(data.token);
-  }
-  return data;
+  return handleResponse<AuthResponse>(res, 'Login failed');
 }
 
 export async function logoutUser(): Promise<void> {
-  try {
-    await fetch(`${API_BASE_URL}/api/v1/auth/logout`, {
-      method: 'POST',
-      headers: getHeaders(),
-      credentials: 'include',
-    });
-  } finally {
-    setAuthToken(null);
-  }
+  await fetch(`${API_BASE_URL}/api/v1/auth/logout`, {
+    method: 'POST',
+    headers: getHeaders(),
+    credentials: 'include',
+  });
 }
 
 export async function fetchCurrentUser(): Promise<{ user: UserProfile; workspaces: WorkspaceResponse[] }> {
@@ -340,27 +302,4 @@ export async function fetchTaskRuns(
     res,
     'Failed to fetch workflow runs'
   );
-}
-
-// -----------------------------------------------------------------------------
-// Backward-Compatibility Helpers
-// -----------------------------------------------------------------------------
-
-export async function fetchTasks(): Promise<TaskListResponse> {
-  const res = await fetch(`${API_BASE_URL}/api/v1/tasks`, {
-    headers: getHeaders(),
-    credentials: 'include',
-  });
-  return handleResponse<TaskListResponse>(res, 'Failed to fetch tasks');
-}
-
-export async function submitTask(payload: TaskSubmissionRequest): Promise<TaskResponse> {
-  const res = await fetch(`${API_BASE_URL}/api/v1/tasks`, {
-    method: 'POST',
-    headers: getHeaders(),
-    credentials: 'include',
-    body: JSON.stringify(payload),
-  });
-
-  return handleResponse<TaskResponse>(res, 'Failed to submit task');
 }

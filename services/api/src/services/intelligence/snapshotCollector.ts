@@ -259,6 +259,17 @@ export function classifyFile(relativePath: string): FileCategory {
 }
 
 /**
+ * Parses a comma-separated ALLOWED_REPO_ROOTS value. Empty entries are dropped:
+ * path.resolve('') would silently resolve to the process cwd.
+ */
+export function parseAllowedRoots(raw: string | undefined): string[] {
+  return (raw ?? '')
+    .split(',')
+    .map((r) => r.trim())
+    .filter((r) => r.length > 0);
+}
+
+/**
  * Validates that candidatePath is canonically located inside at least one approved root.
  * Protects against directory traversal, relative navigation, and symlink-based escapes.
  */
@@ -282,10 +293,11 @@ export function validateAndCanonicalizePath(
   const canonicalPath = fs.realpathSync(absoluteCandidate);
 
   // Resolve allowed roots
-  const allowedRoots = (
-    allowedRootsConfig ||
-    config.ALLOWED_REPO_ROOTS.split(',').map((r) => r.trim())
-  ).map((r) => {
+  const configuredRoots = allowedRootsConfig || parseAllowedRoots(config.ALLOWED_REPO_ROOTS);
+  if (configuredRoots.length === 0) {
+    throw new Error('No allowed repository roots are configured (ALLOWED_REPO_ROOTS).');
+  }
+  const allowedRoots = configuredRoots.map((r) => {
     try {
       return fs.existsSync(r) ? fs.realpathSync(path.resolve(r)) : path.resolve(r);
     } catch {

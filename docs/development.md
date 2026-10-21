@@ -21,6 +21,8 @@ cp .env.example .env
 
 Review `.env`. It contains safe development secrets (`JWT_SECRET`, `DATABASE_URL`, `REDIS_URL`).
 
+To use repository analysis, set `ALLOWED_REPO_ROOTS` to the absolute directories that hold your local checkouts (comma-separated). It has no default; until it is set, analysis requests return 503.
+
 ### Step 2: Install Node Monorepo Dependencies
 ```bash
 npm install
@@ -104,7 +106,7 @@ npm run dev:agent
 
 ### Run All Tests
 ```bash
-# Run TypeScript tests (61 API tests + 8 Web tests = 69 tests)
+# Run TypeScript tests (70 API tests + 10 Web tests = 80 tests)
 npm test
 
 # Run API test suite individually

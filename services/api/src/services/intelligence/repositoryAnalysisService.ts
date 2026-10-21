@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import type {
   RepositoryAnalysisResponse,
@@ -8,26 +7,44 @@ import type {
 import { prisma } from '../prisma.js';
 import { logger } from '../../logger.js';
 import { config } from '../../config.js';
-import { collectRepositorySnapshot } from './snapshotCollector.js';
+import { AppError } from '../../middlewares/errorHandler.js';
+import {
+  collectRepositorySnapshot,
+  parseAllowedRoots,
+  validateAndCanonicalizePath,
+} from './snapshotCollector.js';
 import { detectTechnologies } from './technologyDetector.js';
 import { buildArchitectureSummary } from './architectureSummarizer.js';
 import { rankRelevantFiles } from './relevanceRanker.js';
 
+/**
+ * Resolves a repository record's URL to an existing local directory inside
+ * ALLOWED_REPO_ROOTS. Only absolute local paths are supported; there is no
+ * fallback to the server's working directory (S2/B6).
+ */
 export function resolveRepositoryFsPath(repositoryUrl: string): string {
-  // If repositoryUrl is a local absolute or relative filesystem path
-  if (
-    repositoryUrl.startsWith('/') ||
-    repositoryUrl.startsWith('./') ||
-    repositoryUrl.startsWith('../') ||
-    /^[A-Za-z]:[\\/]/.test(repositoryUrl)
-  ) {
-    if (fs.existsSync(repositoryUrl)) {
-      return path.resolve(repositoryUrl);
-    }
+  const allowedRoots = parseAllowedRoots(config.ALLOWED_REPO_ROOTS);
+  if (allowedRoots.length === 0) {
+    throw new AppError(
+      503,
+      'SERVICE_UNAVAILABLE',
+      'Repository analysis is disabled: ALLOWED_REPO_ROOTS is not configured.'
+    );
   }
 
-  // Fallback: If local workspace is requested or default checkout
-  return process.cwd();
+  if (!path.isAbsolute(repositoryUrl)) {
+    throw new AppError(
+      400,
+      'BAD_REQUEST',
+      `Repository URL '${repositoryUrl}' is not an absolute local path. Only local repositories can be analyzed; remote (e.g. GitHub) ingestion is not implemented.`
+    );
+  }
+
+  try {
+    return validateAndCanonicalizePath(repositoryUrl, allowedRoots);
+  } catch (err: unknown) {
+    throw new AppError(400, 'BAD_REQUEST', err instanceof Error ? err.message : String(err));
+  }
 }
 
 export async function createAndRunAnalysis(
@@ -41,6 +58,9 @@ export async function createAndRunAnalysis(
   if (!repo) {
     throw new Error(`Repository record ${repositoryId} not found in workspace ${workspaceId}`);
   }
+
+  // Reject non-local, missing or disallowed paths before recording an analysis
+  const targetFsPath = resolveRepositoryFsPath(repo.repositoryUrl);
 
   // Create initial PENDING analysis record
   const initialRecord = await prisma.repositoryAnalysis.create({
@@ -63,9 +83,6 @@ export async function createAndRunAnalysis(
         startedAt,
       },
     });
-
-    // 1. Resolve Path
-    const targetFsPath = resolveRepositoryFsPath(repo.repositoryUrl);
 
     // 2. Collect Snapshot
     const snapshot = await collectRepositorySnapshot(targetFsPath, {

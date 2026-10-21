@@ -3,6 +3,28 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { App } from './App';
 import * as client from './api/client';
 
+function mockAuthenticatedSession() {
+  vi.spyOn(client, 'fetchCurrentUser').mockResolvedValue({
+    user: {
+      id: 'usr-1',
+      email: 'alice@autonomous.dev',
+      displayName: 'Alice Architect',
+      accountStatus: 'ACTIVE',
+      createdAt: new Date().toISOString(),
+    },
+    workspaces: [
+      {
+        id: 'ws-100',
+        name: 'Core Platform Team',
+        ownerId: 'usr-1',
+        role: 'OWNER',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+  });
+}
+
 describe('Web Application Dashboard Shell', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -27,11 +49,6 @@ describe('Web Application Dashboard Shell', () => {
         postgres: { status: 'up' },
         redis: { status: 'up' },
       },
-    });
-
-    vi.spyOn(client, 'fetchTasks').mockResolvedValue({
-      tasks: [],
-      total: 0,
     });
 
     render(<App />);
@@ -64,11 +81,6 @@ describe('Web Application Dashboard Shell', () => {
       },
     });
 
-    vi.spyOn(client, 'fetchTasks').mockResolvedValue({
-      tasks: [],
-      total: 0,
-    });
-
     render(<App />);
 
     await waitFor(() => {
@@ -92,11 +104,6 @@ describe('Web Application Dashboard Shell', () => {
       dependencies: {},
     });
 
-    vi.spyOn(client, 'fetchTasks').mockResolvedValue({
-      tasks: [],
-      total: 0,
-    });
-
     render(<App />);
 
     await waitFor(() => {
@@ -106,13 +113,62 @@ describe('Web Application Dashboard Shell', () => {
 
   it('displays error state when task fetch fails', async () => {
     vi.spyOn(client, 'fetchHealth').mockRejectedValue(new Error('Network error'));
-    vi.spyOn(client, 'fetchTasks').mockRejectedValue(new Error('API Connection Refused'));
+    mockAuthenticatedSession();
+    vi.spyOn(client, 'fetchWorkspaceTasks').mockRejectedValue(new Error('API Connection Refused'));
 
     render(<App />);
 
     await waitFor(() => {
       expect(screen.getByText('API Offline')).toBeInTheDocument();
       expect(screen.getByText('API Connection Refused')).toBeInTheDocument();
+    });
+  });
+
+  it('requires a signed-in workspace before tasks can be submitted', async () => {
+    vi.spyOn(client, 'fetchHealth').mockRejectedValue(new Error('Network error'));
+    const submitSpy = vi.spyOn(client, 'submitWorkspaceTask');
+
+    render(<App />);
+
+    const notices = await screen.findAllByText('Sign in and select a workspace to submit tasks.');
+    expect(notices.length).toBeGreaterThanOrEqual(1);
+    for (const button of screen.getAllByRole('button', { name: /Submit & Enqueue Task/i })) {
+      expect(button).toBeDisabled();
+    }
+    expect(submitSpy).not.toHaveBeenCalled();
+  });
+
+  it('submits tasks through the workspace-scoped API', async () => {
+    vi.spyOn(client, 'fetchHealth').mockRejectedValue(new Error('Network error'));
+    mockAuthenticatedSession();
+    vi.spyOn(client, 'fetchWorkspaceTasks').mockResolvedValue({ tasks: [], total: 0 });
+    const submitSpy = vi.spyOn(client, 'submitWorkspaceTask').mockResolvedValue({
+      id: 'task-new-1',
+      title: 'Investigate worker crash',
+      description: 'Worker exits during repository inspection step.',
+      taskType: 'BUG_INVESTIGATION',
+      priority: 'NORMAL',
+      status: 'QUEUED',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    render(<App />);
+    await screen.findByText('Alice Architect');
+
+    fireEvent.change(screen.getByLabelText(/Task Title/i), {
+      target: { value: 'Investigate worker crash' },
+    });
+    fireEvent.change(screen.getByLabelText(/Detailed Problem Statement/i), {
+      target: { value: 'Worker exits during repository inspection step.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Submit & Enqueue Task/i }));
+
+    await waitFor(() => {
+      expect(submitSpy).toHaveBeenCalledWith(
+        'ws-100',
+        expect.objectContaining({ title: 'Investigate worker crash' })
+      );
     });
   });
 
@@ -187,7 +243,6 @@ describe('Web Application Dashboard Shell', () => {
       uptime: 50,
       timestamp: new Date().toISOString(),
     });
-    vi.spyOn(client, 'fetchTasks').mockResolvedValue({ tasks: [], total: 0 });
 
     render(<App />);
 
@@ -205,7 +260,6 @@ describe('Web Application Dashboard Shell', () => {
       uptime: 50,
       timestamp: new Date().toISOString(),
     });
-    vi.spyOn(client, 'fetchTasks').mockResolvedValue({ tasks: [], total: 0 });
 
     render(<App />);
 

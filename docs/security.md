@@ -19,18 +19,17 @@ The Autonomous AI Software Engineering Platform is designed on **zero-trust prin
 
 ### 2.2 Token & Session Management
 - Sessions utilize HMAC-SHA256 signed JSON Web Tokens (JWT).
-- The tokens are delivered through two defense mechanisms:
-  - `Authorization: Bearer <token>` for programmatic API clients and mobile interfaces.
-  - Secure `HttpOnly`, `SameSite=Lax` cookies for browser navigation to defend against Cross-Site Scripting (XSS) token theft.
+- Register and login deliver the token **only** as a secure `HttpOnly`, `SameSite=Lax` cookie. It is never included in a response body, and the web client never stores it, so page JavaScript cannot read it (defends against XSS token theft).
+- The API also accepts `Authorization: Bearer <token>` for non-browser clients and tests.
 - Production configurations validate that `JWT_SECRET` is not set to the default development secret string, halting startup if an insecure secret is detected.
 
-### 2.3 Multi-Tenant Workspace Authorization & Legacy Hardening
+### 2.3 Multi-Tenant Workspace Authorization
 - Every resource (Task, Repository, Analysis, Workflow Run, Workflow Step, Audit Event) is strictly partitioned by `workspaceId`.
 - The `requireWorkspaceMembership` middleware intercepts all workspace-scoped requests:
   - Verifies the user belongs to the target workspace.
   - Enforces role hierarchy (`OWNER` > `ADMIN` > `MEMBER`).
   - Completely blocks cross-workspace data access attempts, returning `403 Forbidden`.
-- **Legacy Route Hardening**: `GET /api/v1/tasks` is restricted so unauthenticated users can only view default bootstrap demo tasks, authenticated users only receive their own workspace tasks, and `GET /api/v1/tasks/:id` validates workspace membership before returning task data.
+- **No unscoped task routes**: The pre-workspace `/api/v1/tasks`, `/api/v1/tasks/:id` and `/api/v1/system/info` routes have been removed. Every task endpoint lives under `/api/v1/workspaces/:workspaceId/tasks` and requires authentication and membership.
 
 ---
 
@@ -58,7 +57,7 @@ The repository intelligence engine executes deep filesystem analysis while stric
 ### 4.1 Path Traversal & Symlink Escape Prevention
 - **Path Canonicalization (`validateAndCanonicalizePath`)**: Every repository path is resolved to its absolute, canonical representation via `path.resolve` and `fs.realpathSync`.
 - **Traversal Rejection**: Directory traversal sequences (`..`), null bytes (`\0`), and cross-drive jumps are immediately rejected with `400 Bad Request`.
-- **Allowed Roots Jail**: If configured, `ALLOWED_REPO_ROOTS` enforces that repositories must strictly reside within pre-authorized filesystem trees.
+- **Allowed Roots Jail (required)**: `ALLOWED_REPO_ROOTS` has no default; analysis returns `503` until it is set. A repository URL must be an absolute local path inside one of the roots, otherwise analysis returns `400` and records nothing. Remote URLs (e.g. GitHub) are rejected; there is no fallback to the server's working directory.
 - **Symlink Containment**: When encountering a symbolic link during traversal, the real path of the target is resolved and verified against the canonical repository root:
   - Internal symlinks pointing within the repository root are permitted.
   - Symlinks escaping the repository root (e.g. pointing to `/etc/passwd` or `C:\Windows`) are immediately skipped and recorded as `SYMLINK_ESCAPE` in inventory.

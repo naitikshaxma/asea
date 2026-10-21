@@ -74,8 +74,9 @@ describe('Authentication & Authorization Endpoints', () => {
     expect(res.body).toHaveProperty('user');
     expect(res.body.user.email).toBe('alice@example.com');
     expect(res.body.user.displayName).toBe('Alice Engineer');
-    expect(res.body).toHaveProperty('token');
-    expect(res.headers['set-cookie']).toBeDefined();
+    // S3: the JWT travels only in the HttpOnly cookie, never in the body
+    expect(res.body).not.toHaveProperty('token');
+    expect(res.headers['set-cookie'][0]).toMatch(/^ae_auth_token=.+; .*HttpOnly/);
   });
 
   it('POST /api/v1/auth/register rejects duplicate email with 409', async () => {
@@ -110,6 +111,48 @@ describe('Authentication & Authorization Endpoints', () => {
     expect(res.status).toBe(401);
     expect(res.body.error.code).toBe('UNAUTHORIZED');
     expect(res.body.error.message).toBe('Invalid email or password');
+  });
+
+  it('POST /api/v1/auth/login sets only an HttpOnly cookie, which alone authenticates /me', async () => {
+    const userId = 'user-carol-07';
+    const passwordHash = await hashPassword('P@ssword12345!');
+    vi.spyOn(prisma.user, 'findUnique')
+      .mockResolvedValueOnce({
+        id: userId,
+        email: 'carol@example.com',
+        passwordHash,
+        displayName: 'Carol',
+        accountStatus: 'ACTIVE',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .mockResolvedValueOnce({
+        id: userId,
+        email: 'carol@example.com',
+        passwordHash,
+        displayName: 'Carol',
+        accountStatus: 'ACTIVE',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        memberships: [],
+      } as any);
+
+    const login = await request(app).post('/api/v1/auth/login').send({
+      email: 'carol@example.com',
+      password: 'P@ssword12345!',
+    });
+
+    expect(login.status).toBe(200);
+    expect(login.body.user.id).toBe(userId);
+    expect(login.body).not.toHaveProperty('token');
+    const cookie = login.headers['set-cookie'][0];
+    expect(cookie).toMatch(/^ae_auth_token=.+; .*HttpOnly/);
+
+    // No Authorization header: the browser client relies on the cookie only
+    const me = await request(app).get('/api/v1/auth/me').set('Cookie', cookie.split(';')[0]);
+
+    expect(me.status).toBe(200);
+    expect(me.body.user.id).toBe(userId);
   });
 
   it('GET /api/v1/auth/me rejects unauthenticated requests with 401', async () => {

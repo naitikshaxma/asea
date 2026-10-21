@@ -47,9 +47,9 @@ export const LoginRequestSchema = z.object({
 
 export type LoginRequest = z.infer<typeof LoginRequestSchema>;
 
+// The session JWT is set as an HttpOnly cookie and is never part of the body.
 export const AuthResponseSchema = z.object({
   user: UserProfileSchema,
-  token: z.string().optional(),
 });
 
 export type AuthResponse = z.infer<typeof AuthResponseSchema>;

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Send, AlertCircle, CheckCircle2, Loader2, Info } from 'lucide-react';
 import type { TaskSubmissionRequest, TaskType, TaskPriority } from '@autonomous-engineer/contracts';
-import { submitTask, submitWorkspaceTask } from '../api/client';
+import { submitWorkspaceTask } from '../api/client';
 
 interface TaskInputFormProps {
   onTaskCreated: () => void;
@@ -24,6 +24,10 @@ export const TaskInputForm: React.FC<TaskInputFormProps> = ({ onTaskCreated, act
     e.preventDefault();
     setErrorMessage(null);
     setSuccessMessage(null);
+    if (!activeWorkspaceId) {
+      setErrorMessage('Sign in and select a workspace to submit tasks.');
+      return;
+    }
     setLoading(true);
 
     try {
@@ -37,9 +41,7 @@ export const TaskInputForm: React.FC<TaskInputFormProps> = ({ onTaskCreated, act
         workspaceId: activeWorkspaceId,
       };
 
-      const result = activeWorkspaceId
-        ? await submitWorkspaceTask(activeWorkspaceId, payload)
-        : await submitTask(payload);
+      const result = await submitWorkspaceTask(activeWorkspaceId, payload);
 
       setSuccessMessage(
         `Task '${result.id}' successfully persisted in PostgreSQL and queued in BullMQ.`
@@ -77,6 +79,12 @@ export const TaskInputForm: React.FC<TaskInputFormProps> = ({ onTaskCreated, act
           Phase 3.
         </div>
       </div>
+
+      {!activeWorkspaceId && (
+        <div className="mb-4 p-3 rounded-lg bg-amber-950/30 border border-amber-500/20 text-xs text-amber-300">
+          Sign in and select a workspace to submit tasks.
+        </div>
+      )}
 
       {errorMessage && (
         <div className="mb-4 p-3 rounded-lg bg-rose-950/40 border border-rose-500/30 flex items-start space-x-2 text-xs text-rose-300">
@@ -193,7 +201,7 @@ export const TaskInputForm: React.FC<TaskInputFormProps> = ({ onTaskCreated, act
         <div className="flex justify-end pt-2">
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || !activeWorkspaceId}
             className="inline-flex items-center space-x-2 px-5 py-2.5 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
           >
             {loading ? (

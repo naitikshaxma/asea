@@ -17,7 +17,6 @@ import { AuthModal } from './components/AuthModal';
 import {
   fetchHealth,
   fetchReadiness,
-  fetchTasks,
   fetchCurrentUser,
   fetchWorkspaceTasks,
   logoutUser,
@@ -73,16 +72,16 @@ export const App: React.FC = () => {
   }, []);
 
   const loadTasks = useCallback(async (workspaceId?: string) => {
-    setTasksLoading(true);
     setTasksError(null);
+    if (!workspaceId) {
+      // Tasks are workspace-scoped; nothing to load until signed in.
+      setTasks([]);
+      return;
+    }
+    setTasksLoading(true);
     try {
-      if (workspaceId) {
-        const data = await fetchWorkspaceTasks(workspaceId);
-        setTasks(data.tasks);
-      } else {
-        const data = await fetchTasks();
-        setTasks(data.tasks);
-      }
+      const data = await fetchWorkspaceTasks(workspaceId);
+      setTasks(data.tasks);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Could not retrieve tasks from API';
       setTasksError(msg);
@@ -133,7 +132,8 @@ export const App: React.FC = () => {
       setActiveWorkspace(wsList[0]);
       loadTasks(wsList[0].id);
     } else {
-      loadTasks();
+      // Login/register responses don't include workspaces; load them from the session
+      checkSession();
     }
   };
 

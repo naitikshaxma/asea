@@ -21,7 +21,7 @@ Phase 3 implements the **Repository Intelligence Engine**, giving the platform t
 
 - **Safe, Controlled Snapshot Collection (`snapshotCollector.ts`)**:
   - Strict path canonicalization rejecting directory traversal (`../`), null bytes, and root escapes.
-  - Allowed roots jail via `ALLOWED_REPO_ROOTS` environment configuration.
+  - Allowed roots jail via `ALLOWED_REPO_ROOTS` (required; only absolute local paths inside these roots can be analyzed).
   - Symlink containment: resolves all symlinks via realpath and blocks any symlink escaping the repository root.
   - Zero-exposure secret file filtering: completely excludes `.env`, `*.key`, `*.pem`, `id_rsa`, `credentials.json`, `*secret*`, and `*token*` files from analysis and inventory storage.
   - Binary file sniffing: inspects file headers for null bytes and control codes, safely categorizing and skipping them from textual parsing.
@@ -41,7 +41,7 @@ Phase 3 implements the **Repository Intelligence Engine**, giving the platform t
 - **Database Persistence & Workspace Authorization (`repositoryAnalysisService.ts`)**:
   - Backed by Prisma `RepositoryAnalysis` model in PostgreSQL with migration management.
   - Workspace-scoped authorization ensuring only authenticated members of a workspace can analyze or query repositories.
-  - Hardened legacy task endpoints: unauthenticated requests cannot access private tenant tasks, and cross-workspace access attempts are rejected.
+  - All task endpoints are workspace-scoped (`/api/v1/workspaces/:workspaceId/tasks`); the unauthenticated legacy `/api/v1/tasks` routes have been removed.
 - **Background Worker Pipeline Integration (`worker.ts`)**:
   - Integrates repository analysis directly into the BullMQ worker during the `INSPECT_REPOSITORY` workflow step.
 - **Interactive Developer Dashboard (`apps/web`)**:
@@ -196,13 +196,13 @@ npm run dev:agent
 Typecheck and the TypeScript test suites need step 2 of the setup (contracts built, Prisma Client generated). They do not need a running database.
 
 ```bash
-# Run all Node.js and Frontend tests (61 API tests + 8 Web tests = 69 tests):
+# Run all Node.js and Frontend tests (70 API tests + 10 Web tests = 80 tests):
 npm test
 
-# Run API test suite individually (61 tests):
+# Run API test suite individually (70 tests):
 npm run test:api
 
-# Run Web test suite individually (8 tests):
+# Run Web test suite individually (10 tests):
 npm run test:web
 
 # Run Python Pytest test suite (5 agent tests):
