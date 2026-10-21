@@ -42,6 +42,13 @@ export const EnvSchema = z
     REDIS_REQUIRED_FOR_READINESS: z
       .union([z.boolean(), z.string().transform((val) => val === 'true')])
       .default(false),
+
+    // Repository Intelligence Engine (Phase 3)
+    ALLOWED_REPO_ROOTS: z.string().default(process.cwd()),
+    ANALYSIS_MAX_FILES: z.coerce.number().int().positive().default(5000),
+    ANALYSIS_MAX_FILE_SIZE_BYTES: z.coerce.number().int().positive().default(1048576), // 1MB
+    ANALYSIS_MAX_TOTAL_BYTES: z.coerce.number().int().positive().default(52428800), // 50MB
+    ANALYSIS_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   })
   .superRefine((data, ctx) => {
     if (data.NODE_ENV === 'production') {

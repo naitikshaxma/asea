@@ -9,6 +9,7 @@ import { createHealthRouter } from './routes/health.js';
 import { authRouter } from './routes/auth.js';
 import { workspacesRouter } from './routes/workspaces.js';
 import { repositoriesRouter } from './routes/repositories.js';
+import { intelligenceRouter } from './routes/intelligence.js';
 import { tasksRouter } from './routes/tasks.js';
 import { config, type EnvConfig } from './config.js';
 
@@ -42,6 +43,7 @@ export function createApp(customConfig?: Partial<EnvConfig>): Application {
   app.use('/api/v1/auth', authRouter);
   app.use('/api/v1', workspacesRouter);
   app.use('/api/v1', repositoriesRouter);
+  app.use('/api/v1', intelligenceRouter);
   app.use('/api/v1', tasksRouter);
 
   // 404 handler

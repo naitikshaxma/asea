@@ -212,3 +212,27 @@ CREATE TABLE IF NOT EXISTS "OutboxEvent" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "dispatchedAt" TIMESTAMP(3)
 );
+
+DO $$ BEGIN
+    CREATE TYPE "AnalysisStatus" AS ENUM ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+CREATE TABLE IF NOT EXISTS "RepositoryAnalysis" (
+    "id" TEXT PRIMARY KEY,
+    "repositoryId" TEXT NOT NULL REFERENCES "Repository"("id") ON DELETE CASCADE,
+    "workspaceId" TEXT NOT NULL REFERENCES "Workspace"("id") ON DELETE CASCADE,
+    "status" "AnalysisStatus" NOT NULL DEFAULT 'PENDING',
+    "analyzerVersion" TEXT NOT NULL DEFAULT '1.0.0',
+    "summary" JSONB,
+    "technologies" JSONB,
+    "inventory" JSONB,
+    "statistics" JSONB,
+    "errorSummary" TEXT,
+    "startedAt" TIMESTAMP(3),
+    "completedAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+

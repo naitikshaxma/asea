@@ -1,4 +1,4 @@
-# Local Development Guide (Phase 2)
+# Local Development Guide (Phase 3)
 
 ## 1. Prerequisites
 
@@ -99,13 +99,19 @@ npm run dev:agent
 
 ### Run All Tests
 ```bash
-# Run TypeScript tests (32 API tests + 6 Web tests)
+# Run TypeScript tests (61 API tests + 8 Web tests = 69 tests)
 npm test
+
+# Run API test suite individually
+npm run test:api
+
+# Run Web test suite individually
+npm run test:web
 
 # Run Python Pytest tests (5 agent tests)
 npm run test:python
 
-# Run Everything
+# Run Everything (74 total tests)
 npm run test:all
 ```
 
@@ -121,7 +127,7 @@ npm run build
 
 ---
 
-## 5. Phase 2 API Endpoints
+## 5. API Endpoints
 
 ### Authentication
 - `POST /api/v1/auth/register` — Register new user & auto-create workspace
@@ -139,6 +145,12 @@ npm run build
 - `GET /api/v1/workspaces/:workspaceId/repositories` — List workspace repositories
 - `POST /api/v1/workspaces/:workspaceId/repositories` — Attach repository record
 - `GET /api/v1/workspaces/:workspaceId/repositories/:repositoryId` — Repository details
+
+### Repository Intelligence (Phase 3)
+- `POST /api/v1/workspaces/:workspaceId/repositories/:repositoryId/analyze` — Trigger snapshot analysis
+- `GET /api/v1/workspaces/:workspaceId/repositories/:repositoryId/analysis` — Retrieve latest analysis and architecture summary
+- `GET /api/v1/workspaces/:workspaceId/repositories/:repositoryId/analysis/:analysisId/files` — Paginated file inventory with classification
+- `POST /api/v1/workspaces/:workspaceId/repositories/:repositoryId/relevant-files` — Task-focused file retrieval and ranking
 
 ### Tasks & Execution History
 - `POST /api/v1/workspaces/:workspaceId/tasks` — Submit task & enqueue workflow

@@ -8,6 +8,7 @@ import {
   BookOpen,
   Activity,
   X,
+  BrainCircuit,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -26,6 +27,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const navItems = [
     { id: 'overview', label: 'Workspace Overview', icon: Layers },
     { id: 'tasks', label: 'Engineering Tasks', icon: CheckSquare },
+    { id: 'intelligence', label: 'Repo Intelligence', icon: BrainCircuit },
     { id: 'repositories', label: 'Repositories', icon: GitBranch },
     { id: 'execution', label: 'Worker Sandboxes', icon: Activity },
     { id: 'security', label: 'Security & Boundaries', icon: ShieldAlert },
@@ -75,8 +77,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="px-6 py-3 border-b border-surface-border/50 bg-surface-elevated/40">
           <div className="flex items-center justify-between text-xs">
             <span className="text-slate-400">Roadmap Stage:</span>
-            <span className="px-2 py-0.5 rounded-full font-mono bg-blue-500/10 text-blue-400 border border-blue-500/20 font-medium">
-              Phase 1 Monorepo
+            <span className="px-2 py-0.5 rounded-full font-mono bg-purple-500/10 text-purple-400 border border-purple-500/20 font-medium">
+              Phase 3 Intelligence
             </span>
           </div>
         </div>

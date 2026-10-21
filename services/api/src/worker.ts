@@ -3,6 +3,7 @@ import { Redis } from 'ioredis';
 import { TASK_QUEUE_NAME, type TaskJobPayload } from './services/queueService.js';
 import { prisma, disconnectPrisma } from './services/prisma.js';
 import { validateTaskTransition, validateRunTransition } from './services/workflowStateMachine.js';
+import { createAndRunAnalysis } from './services/intelligence/repositoryAnalysisService.js';
 import { config } from './config.js';
 import { logger } from './logger.js';
 
@@ -113,7 +114,30 @@ export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
       throw new Error('Simulated worker fault for test verification');
     }
 
-    // Step 2: Repository Inspection
+    // Step 2: Repository Inspection & Intelligence
+    let repoInspectionMeta: Record<string, unknown> = {
+      repositoryUrl: task.repositoryUrl || 'local_workspace_only',
+      targetBranch: task.targetBranch,
+      status: 'verified_safe',
+      phase: 'PHASE_3_INTELLIGENCE',
+    };
+
+    if (task.repositoryId) {
+      try {
+        const analysis = await createAndRunAnalysis(task.repositoryId, workspaceId);
+        repoInspectionMeta = {
+          ...repoInspectionMeta,
+          analysisId: analysis.id,
+          technologies: analysis.technologies.map((t) => t.name),
+          eligibleFiles: analysis.statistics?.eligibleFiles,
+        };
+      } catch (err: unknown) {
+        repoInspectionMeta['analysisNote'] = `Auto-analysis skipped: ${
+          err instanceof Error ? err.message : String(err)
+        }`;
+      }
+    }
+
     await prisma.workflowStep.create({
       data: {
         workflowRunId: runId,
@@ -122,11 +146,7 @@ export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
         stepOrder: 2,
         startedAt: new Date(),
         finishedAt: new Date(),
-        resultMetadata: {
-          repositoryUrl: task.repositoryUrl || 'local_workspace_only',
-          targetBranch: task.targetBranch,
-          status: 'verified_safe',
-        },
+        resultMetadata: repoInspectionMeta as any,
       },
     });
 

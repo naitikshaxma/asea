@@ -15,33 +15,37 @@ The long-term objective of this platform is to take engineering tasks from natur
 
 ---
 
-## 2. Phase 2 Architecture & Implemented Capabilities
+## 2. Phase 3 Architecture & Implemented Capabilities
 
-Phase 2 advances the platform from an in-memory proof of concept into a persistent, asynchronous, multi-tenant backend:
+Phase 3 implements the **Repository Intelligence Engine**, giving the platform the ability to inspect, map, and rank repository codebases with mathematical determinism and defense-in-depth isolation:
 
-- **Authoritative PostgreSQL Persistence**: Integrated **Prisma ORM** with migration-managed normalized schema: `User`, `Workspace`, `WorkspaceMembership`, `Repository`, `Task`, `WorkflowRun`, `WorkflowStep`, `Approval`, `AuditEvent`, and `OutboxEvent`.
-- **Authentication & Multi-Tenant Authorization**:
-  - Secure registration and login with **bcrypt** (cost factor 12) password hashing.
-  - Signed JSON Web Tokens (JWT) delivered via both `Authorization: Bearer` and secure `HttpOnly` cookies.
-  - Role-based access control (`OWNER`, `ADMIN`, `MEMBER`) strictly isolating workspace resources and tasks.
-- **Durable Task & Workflow Management**:
-  - Tasks, workflow runs, and workflow steps persist permanently across API and worker restarts.
-  - Centralized **Workflow State Machine** enforcing strict state transitions (`QUEUED`, `RUNNING`, `COMPLETED`, `FAILED`, `CANCEL_REQUESTED`, `CANCELLED`).
-  - Active task cancellation support.
-- **BullMQ & Redis Background Worker Pipeline**:
-  - Asynchronous background task execution isolated from the main Express API process.
-  - Dedicated background worker (`npm run dev:worker`) executing deterministic steps: `VALIDATE_CONTEXT`, `INSPECT_REPOSITORY`, `GENERATE_SPEC`, and `VERIFY_BOUNDARIES`.
-  - Exponential backoff retry policies and bounded execution.
-- **Transactional Outbox Pattern**:
-  - Guarantees durable dispatch between PostgreSQL and Redis, completely eliminating the dual-write problem.
-  - Atomic transaction commits task, workflow run, and outbox event; outbox dispatcher reliably delivers jobs to BullMQ.
-- **Interactive Developer Frontend (`apps/web`)**:
-  - React 18, Vite 6, and Tailwind CSS dashboard.
-  - User authentication modal (Sign In / Register) with auto-workspace provisioning.
-  - Workspace selector switching contexts in real time.
-  - Workspace repository registration and association.
-  - Expandable workflow run drawer showing real worker attempt history and step status.
-  - Zero mock task metrics or fabricated AI output: honestly reflects backend workflow state.
+- **Safe, Controlled Snapshot Collection (`snapshotCollector.ts`)**:
+  - Strict path canonicalization rejecting directory traversal (`../`), null bytes, and root escapes.
+  - Allowed roots jail via `ALLOWED_REPO_ROOTS` environment configuration.
+  - Symlink containment: resolves all symlinks via realpath and blocks any symlink escaping the repository root.
+  - Zero-exposure secret file filtering: completely excludes `.env`, `*.key`, `*.pem`, `id_rsa`, `credentials.json`, `*secret*`, and `*token*` files from analysis and inventory storage.
+  - Binary file sniffing: inspects file headers for null bytes and control codes, safely categorizing and skipping them from textual parsing.
+  - Hard resource limits: bounds maximum file count (default 5,000), single file size (default 1MB), total byte consumption (default 50MB), and scan timeout (default 30s).
+- **Evidence-Backed Technology Detection (`technologyDetector.ts`)**:
+  - Deterministic manifest inspection across `package.json`, `pyproject.toml`, `requirements.txt`, `go.mod`, `Cargo.toml`, `Dockerfile`, `compose.yaml`.
+  - Classifies runtime languages, backend/frontend frameworks, ORMs, queues, testing frameworks, and containerization tooling.
+  - Each finding provides concrete file evidence, confidence scores (0.0 - 1.0), and human-verifiable rationales.
+- **Deterministic Architecture Summarization (`architectureSummarizer.ts`)**:
+  - Identifies server and application entry points (`server.ts`, `main.py`, `index.ts`, `app.py`).
+  - Maps primary functional modules, API route definitions, service locations, and data models.
+  - Extracts static relative file relationships (`IMPORTS`, `TESTS`, `CONFIGURES`) and links test files directly to corresponding source files.
+- **Task-Focused Relevant File Retrieval (`relevanceRanker.ts`)**:
+  - Natural language task prompt analysis: extracts domain-specific engineering keywords and code tokens.
+  - Multi-factor file ranking: exact filename and basename matching, path containment, source-category bonuses, test file bonuses, and static relationship graph propagation.
+  - Provides relevance scores (0 - 100), explicit match reasons, and action recommendations (`MODIFY`, `REFERENCE`, `EXTEND_TESTS`).
+- **Database Persistence & Workspace Authorization (`repositoryAnalysisService.ts`)**:
+  - Backed by Prisma `RepositoryAnalysis` model in PostgreSQL with migration management.
+  - Workspace-scoped authorization ensuring only authenticated members of a workspace can analyze or query repositories.
+  - Hardened legacy task endpoints: unauthenticated requests cannot access private tenant tasks, and cross-workspace access attempts are rejected.
+- **Background Worker Pipeline Integration (`worker.ts`)**:
+  - Integrates repository analysis directly into the BullMQ worker during the `INSPECT_REPOSITORY` workflow step.
+- **Interactive Developer Dashboard (`apps/web`)**:
+  - Dedicated "Repo Intelligence" tab with technology cards, architecture map, interactive task query tool, and searchable file inventory browser.
 
 ---
 
@@ -54,23 +58,24 @@ Phase 2 advances the platform from an in-memory proof of concept into a persiste
 | **Main API & Backend** | Node.js, Express 4, TypeScript, Prisma ORM, BullMQ, bcryptjs, jsonwebtoken, cookie-parser, Zod, Vitest, Supertest |
 | **Persistence & Queue** | PostgreSQL 16 (Prisma migrations), Redis 7 (BullMQ) |
 | **AI Agent Service** | Python 3.12, FastAPI 0.115, Pydantic v2, Pytest, Httpx |
-| **Contracts** | TypeScript, Zod runtime schemas |
+| **Contracts** | TypeScript, Zod runtime schemas (`packages/contracts`) |
 | **CI/CD** | GitHub Actions |
 
 ---
 
 ## 4. Implemented vs. Planned Functionality
 
-| Capability | Phase 1 | Phase 2 (Current) | Phase 3+ (Roadmap) |
-|---|---|---|---|
-| **Monorepo & Contracts** | Initial Zod schemas | Extended Auth, Workspace, Repo & Task DTOs | Sandbox execution contracts |
-| **Task Persistence** | In-memory register | **PostgreSQL (Prisma ORM migrations)** | Large blob / artifact S3 storage |
-| **Task Queue & Workers** | Synchronous register | **BullMQ + Redis + Dedicated Worker** | Distributed worker autoscaling |
-| **Delivery Guarantee** | None | **Transactional Outbox Pattern** | Dead-letter queue inspection UI |
-| **User & Tenant Auth** | Open / None | **Bcrypt + JWT + HttpOnly Cookies + RBAC** | SSO / SAML / WebAuthn MFA |
-| **Repository Attachment** | Local checkout mode | **Workspace Repositories in PostgreSQL** | Real GitHub App & Webhook listener |
-| **Code Execution** | Host shell disabled | **Deterministic Safe Worker Steps** | Disposable gVisor / MicroVM sandboxes |
-| **AI Reasoning Engine** | FastAPI mock skeleton | FastAPI mock with validated contract | LangGraph / multi-agent reasoning loop |
+| Capability | Phase 1 | Phase 2 | Phase 3 (Current) | Phase 4+ (Roadmap) |
+|---|---|---|---|---|
+| **Monorepo & Contracts** | Initial Zod schemas | Extended Auth, Workspace & Repo DTOs | **Repository Intelligence & Ranking Contracts** | Sandbox execution contracts |
+| **Task Persistence** | In-memory register | PostgreSQL (Prisma ORM) | **PostgreSQL + Analysis History & Snapshots** | Large blob / artifact S3 storage |
+| **Task Queue & Workers** | Synchronous register | BullMQ + Redis + Dedicated Worker | **BullMQ Worker with Real Repo Inspection** | Distributed worker autoscaling |
+| **Delivery Guarantee** | None | Transactional Outbox Pattern | **Transactional Outbox Pattern** | Dead-letter queue inspection UI |
+| **User & Tenant Auth** | Open / None | Bcrypt + JWT + HttpOnly Cookies + RBAC | **Hardened Multi-Tenant Authorization** | SSO / SAML / WebAuthn MFA |
+| **Repository Attachment** | Local checkout mode | Workspace Repositories in PostgreSQL | **Repository Snapshot Collection & Analysis** | Real GitHub App & Webhook listener |
+| **Repository Intelligence** | None | Basic metadata record | **Tech Detection, AST Mapping & File Retrieval** | Semantic vector embeddings |
+| **Code Execution** | Host shell disabled | Deterministic Safe Worker Steps | **Deterministic Safe Worker Steps** | Disposable gVisor / MicroVM sandboxes |
+| **AI Reasoning Engine** | FastAPI mock skeleton | FastAPI mock with validated contract | FastAPI mock with validated contract | LangGraph / multi-agent reasoning loop |
 
 ---
 
@@ -155,7 +160,7 @@ npm run dev:agent
 
 ---
 
-## 8. Service URLs & Health Probes
+## 8. Service URLs & API Endpoints
 
 - **Web Dashboard**: [http://localhost:5173](http://localhost:5173)
 - **Express API Health**: [http://localhost:4000/health](http://localhost:4000/health)
@@ -165,18 +170,30 @@ npm run dev:agent
 - **PostgreSQL**: `127.0.0.1:5432` (`dev_user` / `dev_password` / `autonomous_dev`)
 - **Redis**: `127.0.0.1:6379`
 
+### Repository Intelligence Endpoints
+- `POST /api/v1/workspaces/:workspaceId/repositories/:repositoryId/analyze` — Trigger synchronous or background repository analysis.
+- `GET /api/v1/workspaces/:workspaceId/repositories/:repositoryId/analysis` — Get latest repository analysis summary, technology findings, and stats.
+- `GET /api/v1/workspaces/:workspaceId/repositories/:repositoryId/analysis/:analysisId/files` — Paginated file inventory with categories, languages, and skip reasons.
+- `POST /api/v1/workspaces/:workspaceId/repositories/:repositoryId/relevant-files` — Task-focused file retrieval and ranking for an engineering prompt.
+
 ---
 
 ## 9. Automated Testing Commands
 
 ```bash
-# Run all Node.js and Frontend tests (32 API tests + 6 Web tests):
+# Run all Node.js and Frontend tests (61 API tests + 8 Web tests = 69 tests):
 npm test
+
+# Run API test suite individually (61 tests):
+npm run test:api
+
+# Run Web test suite individually (8 tests):
+npm run test:web
 
 # Run Python Pytest test suite (5 agent tests):
 npm run test:python
 
-# Run All (TypeScript + Python):
+# Run All (TypeScript + Python = 74 total automated tests):
 npm run test:all
 
 # Run type checking across all TypeScript workspaces:
@@ -190,7 +207,7 @@ npm run build
 
 ## 10. Documentation Index
 
-- [Architecture Specification (Phase 2)](file:///c:/Users/sharm/OneDrive/Desktop/miniprject/docs/architecture.md)
-- [Local Development Guide (Phase 2)](file:///c:/Users/sharm/OneDrive/Desktop/miniprject/docs/development.md)
-- [Security Architecture & Threat Model (Phase 2)](file:///c:/Users/sharm/OneDrive/Desktop/miniprject/docs/security.md)
+- [Architecture Specification (Phase 3)](file:///c:/Users/sharm/OneDrive/Desktop/miniprject/docs/architecture.md)
+- [Local Development Guide (Phase 3)](file:///c:/Users/sharm/OneDrive/Desktop/miniprject/docs/development.md)
+- [Security Architecture & Threat Model (Phase 3)](file:///c:/Users/sharm/OneDrive/Desktop/miniprject/docs/security.md)
 - [Worker Sandbox Boundary](file:///c:/Users/sharm/OneDrive/Desktop/miniprject/workers/execution-worker/README.md)

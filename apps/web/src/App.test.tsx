@@ -196,4 +196,182 @@ describe('Web Application Dashboard Shell', () => {
 
     expect(screen.getByText('Sign In to Workspace')).toBeInTheDocument();
   });
+
+  it('navigates to Repository Intelligence tab and renders intelligence panel', async () => {
+    vi.spyOn(client, 'fetchHealth').mockResolvedValue({
+      status: 'ok',
+      service: '@autonomous-engineer/api',
+      version: '0.1.0',
+      uptime: 50,
+      timestamp: new Date().toISOString(),
+    });
+    vi.spyOn(client, 'fetchTasks').mockResolvedValue({ tasks: [], total: 0 });
+
+    render(<App />);
+
+    const intelligenceNavBtn = await screen.findByRole('button', { name: /Repo Intelligence/i });
+    fireEvent.click(intelligenceNavBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText('Repository Intelligence Engine')).toBeInTheDocument();
+      expect(screen.getByText('Phase 3')).toBeInTheDocument();
+      expect(screen.getByText(/AST structure mapping/i)).toBeInTheDocument();
+    });
+  });
+
+  it('renders repository analysis and allows task-focused file retrieval in authenticated workspace', async () => {
+    vi.spyOn(client, 'fetchHealth').mockResolvedValue({
+      status: 'ok',
+      service: '@autonomous-engineer/api',
+      version: '0.1.0',
+      uptime: 50,
+      timestamp: new Date().toISOString(),
+    });
+
+    vi.spyOn(client, 'fetchCurrentUser').mockResolvedValue({
+      user: {
+        id: 'usr-1',
+        email: 'alice@autonomous.dev',
+        displayName: 'Alice Architect',
+        accountStatus: 'ACTIVE',
+        createdAt: new Date().toISOString(),
+      },
+      workspaces: [
+        {
+          id: 'ws-100',
+          name: 'Core Platform Team',
+          ownerId: 'usr-1',
+          role: 'OWNER',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    vi.spyOn(client, 'fetchWorkspaceTasks').mockResolvedValue({
+      tasks: [],
+      total: 0,
+    });
+
+    vi.spyOn(client, 'fetchRepositories').mockResolvedValue({
+      repositories: [
+        {
+          id: 'repo-abc',
+          workspaceId: 'ws-100',
+          name: 'autonomous-core',
+          repositoryUrl: 'c:/Users/sharm/OneDrive/Desktop/miniprject',
+          provider: 'LOCAL',
+          defaultBranch: 'main',
+          connectionStatus: 'CONNECTED',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      total: 1,
+    });
+
+    vi.spyOn(client, 'fetchLatestAnalysis').mockResolvedValue({
+      id: 'analysis-123',
+      workspaceId: 'ws-100',
+      repositoryId: 'repo-abc',
+      status: 'COMPLETED',
+      analyzerVersion: '1.0.0',
+      summary: {
+        repositoryOverview: 'Monorepo for autonomous engineering platform',
+        entryPoints: ['services/api/src/server.ts'],
+        keyModules: [
+          { name: 'API', path: 'services/api', description: 'Backend API service', fileCount: 25 },
+        ],
+        apiRoutes: [
+          { path: '/api/v1/tasks', handlerFile: 'services/api/src/routes/tasks.ts', framework: 'Express' },
+        ],
+        serviceLocations: ['services/api/src/services/intelligence/relevanceRanker.ts'],
+        modelLocations: ['packages/contracts/src/intelligence.ts'],
+        testFrameworks: ['Vitest'],
+        testLocations: ['services/api/tests/intelligence/relevanceRanker.test.ts'],
+        configurationLocations: ['tsconfig.json'],
+        relationships: [
+          {
+            sourceFile: 'services/api/src/server.ts',
+            targetFile: 'services/api/src/app.ts',
+            relationshipType: 'IMPORTS',
+          },
+        ],
+        limitations: [],
+        confidence: 0.95,
+      },
+      technologies: [
+        {
+          name: 'TypeScript',
+          category: 'LANGUAGE',
+          confidence: 1.0,
+          evidenceFiles: ['tsconfig.json'],
+          rationale: 'TypeScript compiler configuration detected',
+        },
+      ],
+      statistics: {
+        totalFiles: 42,
+        eligibleFiles: 42,
+        skippedFiles: 0,
+        totalBytes: 150000,
+        durationMs: 120,
+        binaryFilesSkipped: 0,
+        secretFilesExcluded: 0,
+      },
+      errorSummary: null,
+      startedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    vi.spyOn(client, 'fetchRelevantFiles').mockResolvedValue({
+      workspaceId: 'ws-100',
+      repositoryId: 'repo-abc',
+      query: 'Fix relevance ranker scoring bug',
+      totalAnalyzed: 42,
+      results: [
+        {
+          path: 'services/api/src/services/intelligence/relevanceRanker.ts',
+          score: 85,
+          category: 'SOURCE',
+          reason: 'Filename exact match: relevanceRanker',
+          evidence: ['services/api/tests/intelligence/relevanceRanker.test.ts'],
+          suggestedAction: 'MODIFY',
+        },
+      ],
+      limitations: [],
+    });
+
+    render(<App />);
+
+    // Wait for user to be loaded
+    await screen.findByText('Alice Architect');
+
+    // Click Repo Intelligence navigation tab
+    const intelligenceNavBtn = await screen.findByRole('button', { name: /Repo Intelligence/i });
+    fireEvent.click(intelligenceNavBtn);
+
+    // Verify Repository Intelligence is displayed with detected tech
+    await waitFor(() => {
+      expect(screen.getByText('Repository Intelligence Engine')).toBeInTheDocument();
+      expect(screen.getByText('TypeScript')).toBeInTheDocument();
+      expect(screen.getByText(/\/ 42 files/)).toBeInTheDocument();
+      expect(screen.getByText('services/api/src/server.ts')).toBeInTheDocument();
+    });
+
+    // Test task-focused retrieval input
+    const queryInput = screen.getByPlaceholderText(/Investigate memory leak in authMiddleware/i);
+    fireEvent.change(queryInput, { target: { value: 'Fix relevance ranker scoring bug' } });
+
+    const searchBtn = screen.getByRole('button', { name: /Rank Files/i });
+    fireEvent.click(searchBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText('services/api/src/services/intelligence/relevanceRanker.ts')).toBeInTheDocument();
+      expect(screen.getByText('Score: 85')).toBeInTheDocument();
+      expect(screen.getByText(/Recommendation: MODIFY/)).toBeInTheDocument();
+    });
+  });
 });
+

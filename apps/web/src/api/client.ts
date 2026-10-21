@@ -15,6 +15,10 @@ import type {
   CreateRepositoryRequest,
   CancelTaskResponse,
   WorkflowRunResponse,
+  RepositoryAnalysisResponse,
+  AnalysisFileListResponse,
+  TaskRelevantFilesRequest,
+  TaskRelevantFilesResponse,
 } from '@autonomous-engineer/contracts';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
@@ -197,6 +201,82 @@ export async function createRepository(
   });
 
   return handleResponse<RepositoryResponse>(res, 'Failed to add repository record');
+}
+
+// -----------------------------------------------------------------------------
+// Repository Intelligence Engine (Phase 3)
+// -----------------------------------------------------------------------------
+
+export async function triggerRepositoryAnalysis(
+  workspaceId: string,
+  repositoryId: string
+): Promise<RepositoryAnalysisResponse> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/v1/workspaces/${workspaceId}/repositories/${repositoryId}/analyze`,
+    {
+      method: 'POST',
+      headers: getHeaders(),
+      credentials: 'include',
+    }
+  );
+
+  return handleResponse<RepositoryAnalysisResponse>(res, 'Failed to trigger repository analysis');
+}
+
+export async function fetchLatestAnalysis(
+  workspaceId: string,
+  repositoryId: string
+): Promise<RepositoryAnalysisResponse> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/v1/workspaces/${workspaceId}/repositories/${repositoryId}/analysis/latest`,
+    {
+      headers: getHeaders(),
+      credentials: 'include',
+    }
+  );
+
+  return handleResponse<RepositoryAnalysisResponse>(res, 'Failed to fetch latest analysis');
+}
+
+export async function fetchAnalysisFiles(
+  workspaceId: string,
+  repositoryId: string,
+  analysisId: string,
+  options?: { page?: number; pageSize?: number; category?: string }
+): Promise<AnalysisFileListResponse> {
+  const params = new URLSearchParams();
+  if (options?.page) params.set('page', String(options.page));
+  if (options?.pageSize) params.set('pageSize', String(options.pageSize));
+  if (options?.category) params.set('category', options.category);
+
+  const query = params.toString() ? `?${params.toString()}` : '';
+  const res = await fetch(
+    `${API_BASE_URL}/api/v1/workspaces/${workspaceId}/repositories/${repositoryId}/analysis/${analysisId}/files${query}`,
+    {
+      headers: getHeaders(),
+      credentials: 'include',
+    }
+  );
+
+  return handleResponse<AnalysisFileListResponse>(res, 'Failed to fetch analysis file inventory');
+}
+
+export async function fetchRelevantFiles(
+  workspaceId: string,
+  repositoryId: string,
+  payload: TaskRelevantFilesRequest
+): Promise<TaskRelevantFilesResponse> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/v1/workspaces/${workspaceId}/repositories/${repositoryId}/relevant-files`,
+    {
+      method: 'POST',
+      headers: getHeaders(),
+      credentials: 'include',
+      body: JSON.stringify(payload),
+    }
+  );
+
+  return handleResponse<TaskRelevantFilesResponse>(res, 'Failed to rank relevant files');
 }
 
 // -----------------------------------------------------------------------------

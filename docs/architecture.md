@@ -1,8 +1,8 @@
-# Platform Architecture Specification (Phase 2)
+# Platform Architecture Specification (Phase 3)
 
 ## 1. System Topology & Architecture Overview
 
-The Autonomous AI Software Engineering Platform is architected as a modular, contract-driven monorepo. Phase 2 introduces authoritative **PostgreSQL persistence** via Prisma ORM, **JWT and HttpOnly cookie authentication**, **workspace membership and role-based access control**, **BullMQ background processing** backed by Redis, a **transactional outbox pattern** for atomic job enqueueing, and a centralized **workflow state machine**.
+The Autonomous AI Software Engineering Platform is architected as a modular, contract-driven monorepo. Phase 3 introduces the **Repository Intelligence Engine**, encompassing secure filesystem snapshot collection, evidence-backed technology detection, AST architecture summarization, task-focused file retrieval, and database-backed analysis persistence.
 
 ```mermaid
 graph TD
@@ -118,6 +118,7 @@ The PostgreSQL database is normalized and migration-managed (`prisma/migrations`
 | `Approval` | Human-in-the-loop decisions | `id`, `taskId`, `stepId`, `status`, `decisionMakerId`, `reason` |
 | `AuditEvent` | Security & compliance audit trail | `id`, `workspaceId`, `actorId`, `eventType`, `resourceId`, `metadata` |
 | `OutboxEvent` | Transactional outbox event queue | `id`, `aggregateType`, `aggregateId`, `eventType`, `payload`, `status`, `retryCount` |
+| `RepositoryAnalysis` | Persisted repository intelligence snapshots | `id`, `workspaceId`, `repositoryId`, `status`, `commitHash`, `analyzerVersion`, `summary`, `technologies`, `statistics`, `fileInventory` |
 
 ---
 
@@ -150,3 +151,62 @@ State transitions are centrally governed by `workflowStateMachine.ts`:
 
 - **Validation Rules**: Terminal states (`COMPLETED`, `FAILED`, `CANCELLED`) cannot transition backward to `RUNNING`. Retrying a task requires instantiating a new `WorkflowRun`.
 - **Cancellation**: Cancelling an active job transitions it to `CANCEL_REQUESTED`, allowing the worker to safely terminate processing and record `CANCELLED`.
+
+---
+
+## 5. Repository Intelligence Engine Architecture (Phase 3)
+
+The Repository Intelligence Engine provides deterministic codebase comprehension without arbitrary shell execution:
+
+```
+[ Repository Source Directory ]
+             │
+             ▼
+[ 1. snapshotCollector.ts ]
+   ├── Canonicalize path & enforce ALLOWED_REPO_ROOTS
+   ├── Verify symlink realpath containment (prevent escapes)
+   ├── Exclude secret files (.env, *.key, *.pem, id_rsa, credentials.json)
+   ├── Sniff binary files (null bytes & control characters)
+   └── Enforce bounds (MAX_FILES, MAX_FILE_SIZE, MAX_TOTAL_BYTES, TIMEOUT)
+             │
+             ├── Eligible Files + Text Buffers
+             │
+             ├──► [ 2. technologyDetector.ts ]
+             │       ├── Parse package.json, pyproject.toml, go.mod, Cargo.toml, Dockerfile
+             │       └── Produce evidence-backed findings with confidence & rationales
+             │
+             ├──► [ 3. architectureSummarizer.ts ]
+             │       ├── Extract entry points, key modules, API routes, service/model files
+             │       └── Build static relationship graph (IMPORTS, TESTS, CONFIGURES)
+             │
+             ▼
+[ 4. repositoryAnalysisService.ts ]
+   ├── Persist to PostgreSQL (RepositoryAnalysis model via Prisma)
+   └── Expose via Authenticated, Tenant-Scoped REST Endpoints
+             │
+             ▼
+[ 5. relevanceRanker.ts ] (On-Demand Task Retrieval)
+   ├── Extract query keywords & code tokens from engineering prompt
+   ├── Score candidate files (token match, basename match, category weight, test coverage)
+   └── Return top N ranked files with scores (0-100), reasons, and action recommendations
+```
+
+### 5.1 Snapshot Collector Security Pipeline
+1. **Path Canonicalization**: `path.resolve` and `fs.realpathSync` eliminate directory traversal (`../`), null bytes (`\0`), and path separators spoofing.
+2. **Allowed Roots Jail**: If `ALLOWED_REPO_ROOTS` is set, verifies target repository resides inside an authorized directory hierarchy.
+3. **Symlink Containment**: Resolves real path of symlinks; if target escapes repo root, the entry is skipped with reason `SYMLINK_ESCAPE`.
+4. **Zero Secret Leakage**: File paths matching secret patterns (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `credentials.json`, `*secret*`, `*token*`) are strictly excluded.
+5. **Binary Sniffing**: Inspects the first 1KB of each file for null bytes. Binary files are tracked in inventory as `BINARY` but skipped from AST summarization.
+
+### 5.2 Relevance Ranking Engine
+The relevance ranker scores repository files against natural language engineering prompts:
+- **Token Extraction**: Tokenizes prompt, identifies camelCase / snake_case code symbols, and filters common English stop-words.
+- **Match Scoring**:
+  - Exact filename match: **+40 points**
+  - Token in filename: **+20 points**
+  - Token in path: **+10 points**
+  - Exact token in content: **+8 points**
+- **Relational Propagation**:
+  - Test bonus: If a source file matches query tokens, related test files receive **+15 bonus points** and vice-versa.
+  - Category weighting: Source files matching query tokens receive a **+12 point category bonus**.
+- **Action Recommendations**: Assigns recommended actions (`MODIFY` for high-scoring primary candidates, `REFERENCE` for models and configs, `EXTEND_TESTS` for corresponding test suites).

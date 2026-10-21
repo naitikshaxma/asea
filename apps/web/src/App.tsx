@@ -12,6 +12,7 @@ import { TaskInputForm } from './components/TaskInputForm';
 import { ExecutionPanel } from './components/ExecutionPanel';
 import { RecentTasks } from './components/RecentTasks';
 import { RepoPlaceholder } from './components/RepoPlaceholder';
+import { RepositoryIntelligence } from './components/RepositoryIntelligence';
 import { AuthModal } from './components/AuthModal';
 import {
   fetchHealth,
@@ -26,6 +27,7 @@ import { ShieldAlert, BookOpen, Terminal } from 'lucide-react';
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState('overview');
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [selectedRepoId, setSelectedRepoId] = useState<string | undefined>(undefined);
 
   // Auth State
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
@@ -184,7 +186,13 @@ export const App: React.FC = () => {
               <MetricsOverview taskCount={tasks.length} apiConnected={apiStatus !== 'disconnected'} />
 
               {/* Repository Attachment Status */}
-              <RepoPlaceholder activeWorkspace={activeWorkspace} />
+              <RepoPlaceholder
+                activeWorkspace={activeWorkspace}
+                onRepoSelected={(repoId) => {
+                  setSelectedRepoId(repoId);
+                  setActiveTab('intelligence');
+                }}
+              />
 
               {/* Grid: Task Intake Form & Worker Sandbox */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -222,9 +230,24 @@ export const App: React.FC = () => {
             </div>
           )}
 
+          {activeTab === 'intelligence' && (
+            <div className="space-y-6">
+              <RepositoryIntelligence
+                activeWorkspace={activeWorkspace}
+                selectedRepoId={selectedRepoId}
+              />
+            </div>
+          )}
+
           {activeTab === 'repositories' && (
             <div className="space-y-6">
-              <RepoPlaceholder activeWorkspace={activeWorkspace} />
+              <RepoPlaceholder
+                activeWorkspace={activeWorkspace}
+                onRepoSelected={(repoId) => {
+                  setSelectedRepoId(repoId);
+                  setActiveTab('intelligence');
+                }}
+              />
               <div className="p-6 rounded-xl bg-surface border border-surface-border text-xs text-slate-400 space-y-3">
                 <h3 className="text-sm font-semibold text-slate-200">Repository Capabilities Roadmap</h3>
                 <p>

@@ -91,6 +91,13 @@ enum OutboxStatus {
   FAILED
 }
 
+enum AnalysisStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
 model User {
   id                 String                @id @default(uuid())
   email              String                @unique
@@ -121,6 +128,7 @@ model Workspace {
   repositories Repository[]
   tasks       Task[]
   auditEvents AuditEvent[]
+  analyses    RepositoryAnalysis[]
 
   @@index([ownerId])
 }
@@ -153,6 +161,7 @@ model Repository {
 
   workspace        Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   tasks            Task[]
+  analyses         RepositoryAnalysis[]
 
   @@index([workspaceId])
 }
@@ -280,6 +289,31 @@ model OutboxEvent {
   createdAt     DateTime     @default(now())
   dispatchedAt  DateTime?
 
+  @@index([status])
+  @@index([createdAt])
+}
+
+model RepositoryAnalysis {
+  id              String         @id @default(uuid())
+  repositoryId    String
+  workspaceId     String
+  status          AnalysisStatus @default(PENDING)
+  analyzerVersion String         @default("1.0.0")
+  summary         Json?
+  technologies    Json?
+  inventory       Json?
+  statistics      Json?
+  errorSummary    String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  repository      Repository     @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  workspace       Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([repositoryId])
+  @@index([workspaceId])
   @@index([status])
   @@index([createdAt])
 }
