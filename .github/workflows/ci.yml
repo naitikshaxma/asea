@@ -61,6 +61,45 @@ jobs:
           cd services/agent-service
           pytest
 
+  database-migrations:
+    name: Prisma Migrations Apply to an Empty Database
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: autonomous_ci
+          POSTGRES_USER: ci_user
+          POSTGRES_PASSWORD: ci_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci_user -d autonomous_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://ci_user:ci_password@localhost:5432/autonomous_ci
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: 'npm'
+
+      - name: Install Monorepo Dependencies
+        run: npm ci
+
+      - name: Apply Prisma Migrations
+        run: npm run prisma:migrate
+
+      - name: Fail if schema.prisma and the migrated database have drifted
+        working-directory: services/api
+        run: npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
+
   docker-compose-validation:
     name: Validate Docker Compose Configuration
     runs-on: ubuntu-latest

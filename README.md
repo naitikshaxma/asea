@@ -102,14 +102,21 @@ cp .env.example .env
 npm install
 ```
 
-### 3. Generate Database Client & Apply Migrations
+### 3. Start PostgreSQL & Redis, Generate Database Client & Apply Migrations
 ```bash
+# Start PostgreSQL 16 and Redis 7 (the Postgres container starts with an empty database):
+npm run docker:up
+
 # Generate the Prisma Client:
 npm run prisma:generate
 
-# Apply migrations to PostgreSQL (once containers are running):
+# Create or upgrade the schema:
 npm run prisma:migrate
 ```
+
+Prisma migrations in `services/api/prisma/migrations` are the single source of truth for the database schema.
+
+> **Upgrading from an older checkout:** earlier versions created tables from `infra/docker/init-db.sql` when the Postgres volume was first initialised. Prisma refuses to migrate that database (`P3005: The database schema is not empty`). Recreate the dev volume with `docker compose down -v` (**this deletes all local dev data**), then run the steps above again.
 
 ### 4. Setup Python Agent Service Virtual Environment
 ```bash
