@@ -7,8 +7,11 @@ import { VerificationRequestSchema } from '@autonomous-engineer/contracts';
 import { VerificationInputError, buildVerificationRequest } from '../../src/services/verification/gitDiff.js';
 
 // A real git repository in a temp dir: base commit, then a head commit that
-// modifies, adds, deletes and adds a binary file.
-describe('buildVerificationRequest (git)', () => {
+// modifies, adds, deletes and adds a binary file. Each test spawns many git
+// processes, which can take several seconds on a loaded Windows machine.
+const GIT_TEST_TIMEOUT_MS = 30000;
+
+describe('buildVerificationRequest (git)', { timeout: GIT_TEST_TIMEOUT_MS }, () => {
   let dir: string;
   let base: string;
   let head: string;
@@ -53,7 +56,7 @@ describe('buildVerificationRequest (git)', () => {
     git('add', '-A');
     git('commit', '-q', '-m', 'head');
     head = git('rev-parse', 'HEAD');
-  });
+  }, GIT_TEST_TIMEOUT_MS);
 
   afterAll(() => {
     fs.rmSync(dir, { recursive: true, force: true });
