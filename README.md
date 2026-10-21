@@ -203,10 +203,10 @@ Submit a `VERIFICATION` task (see [docs/development.md](docs/development.md)); t
 Typecheck and the TypeScript test suites need step 2 of the setup (contracts built, Prisma Client generated). They do not need a running database.
 
 ```bash
-# Run all Node.js and Frontend tests (123 API tests + 11 Web tests = 134 tests):
+# Run all Node.js and Frontend tests (128 API tests + 11 Web tests = 139 tests):
 npm test
 
-# Run API test suite individually (123 tests):
+# Run API test suite individually (128 tests):
 npm run test:api
 
 # Run Web test suite individually (11 tests):
@@ -215,7 +215,7 @@ npm run test:web
 # Run Python Pytest test suite (68 agent tests):
 npm run test:python
 
-# Run All (TypeScript + Python = 202 total automated tests):
+# Run All (TypeScript + Python = 207 total automated tests):
 npm run test:all
 
 # Run type checking across all TypeScript workspaces:

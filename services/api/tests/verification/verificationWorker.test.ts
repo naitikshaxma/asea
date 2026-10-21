@@ -71,6 +71,7 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
   let findings: Array<Record<string, any>>;
   let audits: Array<Record<string, any>>;
   let steps: Array<Record<string, any>>;
+  let onStepCreated: (stepType: string) => void;
   const originalRoots = config.ALLOWED_REPO_ROOTS;
 
   const job = (attemptsMade: number) =>
@@ -122,6 +123,7 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
     findings = [];
     audits = [];
     steps = [];
+    onStepCreated = () => {};
 
     const taskRow = async () => ({ ...task, runs: [...runs.values()] });
     vi.spyOn(prisma.task, 'findUnique').mockImplementation(taskRow as any);
@@ -140,6 +142,7 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
       Object.assign(runs.get(where.id)!, data)) as any);
     vi.spyOn(prisma.workflowStep, 'create').mockImplementation((async ({ data }: any) => {
       steps.push(data);
+      onStepCreated(data.stepType);
       return data;
     }) as any);
     vi.spyOn(prisma.repository, 'findFirstOrThrow').mockResolvedValue({
@@ -150,6 +153,8 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
     vi.spyOn(prisma.verificationRun, 'findFirst').mockImplementation((async () => ({ ...verificationRun })) as any);
     vi.spyOn(prisma.verificationRun, 'update').mockImplementation((async ({ data }: any) =>
       Object.assign(verificationRun, data)) as any);
+    vi.spyOn(prisma.verificationRun, 'findMany').mockImplementation((async ({ where }: any) =>
+      where.status.in.includes(verificationRun.status) ? [{ ...verificationRun }] : []) as any);
     vi.spyOn(prisma.verificationFinding, 'createMany').mockImplementation((async ({ data }: any) => {
       findings.push(...data);
       return { count: data.length };
@@ -291,6 +296,57 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
       alreadyCompleted: true,
     });
     expect(task.status).toBe('COMPLETED');
+  });
+
+  describe('cancellation before analysis (task 1c)', () => {
+    const expectCancelledAndSealed = (eventsBefore: string[]) => {
+      expect(verificationRun.status).toBe('CANCELLED');
+      expect(task.status).toBe('CANCELLED');
+      expect(eventTypes()).toEqual([...eventsBefore, 'VERIFICATION_CANCELLED', 'RUN_SEALED']);
+      const verified = verifyAuditChain(chain());
+      expect(verified.valid).toBe(true);
+      expect(verifyRunSeal(verificationRun as any, chain() as any, verified)).toEqual({ required: true, valid: true });
+      expect(vi.mocked(requestStaticAnalysis)).toHaveBeenCalledTimes(eventsBefore.length ? 1 : 0);
+    };
+
+    it('cancels and seals the run when the task is picked up in CANCEL_REQUESTED', async () => {
+      task.status = 'CANCEL_REQUESTED';
+      await processTaskJob(job(0));
+      expectCancelledAndSealed([]);
+      expect(chain()[0]!.metadata).toEqual({ reason: 'Task cancelled by user before execution commenced.' });
+      expect(chain()[0]!.actorId).toBeNull();
+    });
+
+    it('cancels and seals the run when cancellation arrives before STATIC_ANALYSIS', async () => {
+      onStepCreated = (stepType) => {
+        if (stepType === 'VALIDATE_CONTEXT') task.status = 'CANCEL_REQUESTED';
+      };
+      await processTaskJob(job(0));
+      expectCancelledAndSealed([]);
+      expect(steps.map((s) => s.stepType)).toEqual(['VALIDATE_CONTEXT']);
+    });
+
+    it('cancels and seals a run left RUNNING by a failed attempt', async () => {
+      vi.mocked(requestStaticAnalysis).mockRejectedValueOnce(new Error('Agent service returned 503'));
+      await expect(processTaskJob(job(0))).rejects.toThrow();
+      expect(verificationRun.status).toBe('RUNNING');
+
+      task.status = 'CANCEL_REQUESTED';
+      await processTaskJob(job(1));
+
+      expectCancelledAndSealed(['VERIFICATION_STARTED', 'VERIFICATION_ATTEMPT_FAILED']);
+    });
+
+    it('leaves a completed run as it is when cancellation arrives after analysis', async () => {
+      onStepCreated = (stepType) => {
+        if (stepType === 'STATIC_ANALYSIS') task.status = 'CANCEL_REQUESTED';
+      };
+      await processTaskJob(job(0));
+      expect(task.status).toBe('CANCELLED');
+      expect(verificationRun.status).toBe('COMPLETED');
+      expect(eventTypes().at(-1)).toBe('RUN_SEALED');
+      expect(eventTypes()).not.toContain('VERIFICATION_CANCELLED');
+    });
   });
 
   it('refuses to extend a sealed audit chain', async () => {

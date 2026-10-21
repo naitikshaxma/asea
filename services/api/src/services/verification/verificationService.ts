@@ -62,7 +62,7 @@ export async function finishVerificationRun(
   db: Db,
   run: Pick<VerificationRun, 'id' | 'workspaceId'>,
   outcome: {
-    status: 'COMPLETED' | 'FAILED';
+    status: 'COMPLETED' | 'FAILED' | 'CANCELLED';
     eventType: string;
     metadata: Prisma.InputJsonObject;
     data?: Prisma.VerificationRunUpdateInput;
@@ -87,6 +87,22 @@ export async function finishVerificationRun(
       auditEventCount: sealed.length,
     },
   });
+}
+
+/**
+ * Cancels the task's verification run if it has not finished (QUEUED, or
+ * RUNNING after a failed attempt): VERIFICATION_CANCELLED, then the seal.
+ * A run that already reached a terminal state is left as it is.
+ */
+export async function cancelVerificationRunForTask(taskId: string, reason: string, actorId: string | null): Promise<void> {
+  const runs = await prisma.verificationRun.findMany({
+    where: { taskId, status: { in: ['QUEUED', 'RUNNING'] } },
+  });
+  for (const run of runs) {
+    await prisma.$transaction((tx) =>
+      finishVerificationRun(tx, run, { status: 'CANCELLED', eventType: 'VERIFICATION_CANCELLED', metadata: { reason } }, actorId)
+    );
+  }
 }
 
 /** sha256 over the run's findings, recorded in the audit chain so edits to them are detectable. */

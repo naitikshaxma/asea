@@ -9,6 +9,7 @@ import { requireAuth, requireWorkspaceMembership } from '../middlewares/authMidd
 import { validateTaskTransition, isTaskCancellable } from '../services/workflowStateMachine.js';
 import { dispatchPendingOutboxEvents } from '../services/outboxDispatcher.js';
 import { AppError } from '../middlewares/errorHandler.js';
+import { cancelVerificationRunForTask } from '../services/verification/verificationService.js';
 
 export const tasksRouter = Router({ mergeParams: true });
 
@@ -274,6 +275,9 @@ tasksRouter.post(
           where: { id: task.runs[0].id },
           data: { status: 'CANCELLED', finishedAt: new Date() },
         });
+      }
+      if (nextStatus === 'CANCELLED' && task.taskType === 'VERIFICATION') {
+        await cancelVerificationRunForTask(task.id, 'Task cancelled by user before execution commenced.', req.user!.id);
       }
 
       res.status(200).json({

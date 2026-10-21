@@ -6,7 +6,7 @@ import { TASK_QUEUE_NAME, type TaskJobPayload } from './services/queueService.js
 import { prisma, disconnectPrisma } from './services/prisma.js';
 import { validateTaskTransition, validateRunTransition } from './services/workflowStateMachine.js';
 import { createAndRunAnalysis } from './services/intelligence/repositoryAnalysisService.js';
-import { runVerificationStep } from './services/verification/verificationService.js';
+import { cancelVerificationRunForTask, runVerificationStep } from './services/verification/verificationService.js';
 import { config } from './config.js';
 import { logger } from './logger.js';
 
@@ -56,6 +56,11 @@ async function cancelTaskRun(taskId: string, runId: string, reason: string): Pro
     where: { id: taskId },
     data: { status: 'CANCELLED', completedAt: task.completedAt ?? finishedAt },
   });
+
+  // The canceller is not recorded on the task, so the audit actor is unknown here
+  if (task.taskType === 'VERIFICATION') {
+    await cancelVerificationRunForTask(taskId, reason, null);
+  }
 }
 
 /**

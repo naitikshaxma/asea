@@ -14,7 +14,7 @@ export const VerificationRunResponseSchema = z.object({
   headSha: z.string(),
   requirement: z.string(),
   authorType: z.enum(['AI', 'HUMAN', 'UNKNOWN']),
-  status: z.enum(['QUEUED', 'RUNNING', 'COMPLETED', 'FAILED']),
+  status: z.enum(['QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED']),
   score: z.number().nullable(),
   verdict: z.string().nullable(),
   findingCount: z.number().int(),
