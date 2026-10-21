@@ -6,3 +6,4 @@ export * from './auth.js';
 export * from './workspaces.js';
 export * from './repositories.js';
 export * from './intelligence.js';
+export * from './verification.js';

@@ -1,0 +1,259 @@
+{
+  "ChangedFile": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "minLength": 1
+      },
+      "head_content": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "head_content"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "VerificationRequest": {
+    "type": "object",
+    "properties": {
+      "repository_id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "base_sha": {
+        "type": "string",
+        "minLength": 1
+      },
+      "head_sha": {
+        "type": "string",
+        "minLength": 1
+      },
+      "requirement": {
+        "type": "string"
+      },
+      "unified_diff": {
+        "type": "string"
+      },
+      "changed_files": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "head_content": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "head_content"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "author_type": {
+        "type": "string",
+        "enum": [
+          "ai",
+          "human",
+          "unknown"
+        ]
+      }
+    },
+    "required": [
+      "repository_id",
+      "base_sha",
+      "head_sha",
+      "requirement",
+      "unified_diff",
+      "changed_files",
+      "author_type"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "Finding": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "category": {
+        "type": "string",
+        "enum": [
+          "static",
+          "negative_space",
+          "architecture",
+          "test_gap"
+        ]
+      },
+      "severity": {
+        "type": "string",
+        "enum": [
+          "critical",
+          "high",
+          "medium",
+          "low"
+        ]
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1
+      },
+      "file": {
+        "type": "string",
+        "minLength": 1
+      },
+      "line": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "evidence": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "source": {
+        "type": "string",
+        "enum": [
+          "deterministic",
+          "llm"
+        ]
+      },
+      "rule_id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "remediation": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "id",
+      "category",
+      "severity",
+      "title",
+      "file",
+      "line",
+      "evidence",
+      "source",
+      "rule_id",
+      "remediation"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "StaticAnalysisResult": {
+    "type": "object",
+    "properties": {
+      "findings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "category": {
+              "type": "string",
+              "enum": [
+                "static",
+                "negative_space",
+                "architecture",
+                "test_gap"
+              ]
+            },
+            "severity": {
+              "type": "string",
+              "enum": [
+                "critical",
+                "high",
+                "medium",
+                "low"
+              ]
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1
+            },
+            "file": {
+              "type": "string",
+              "minLength": 1
+            },
+            "line": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "deterministic",
+                "llm"
+              ]
+            },
+            "rule_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "remediation": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "category",
+            "severity",
+            "title",
+            "file",
+            "line",
+            "evidence",
+            "source",
+            "rule_id",
+            "remediation"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "tools_run": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "tools_unavailable": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "duration_ms": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "required": [
+      "findings",
+      "tools_run",
+      "tools_unavailable",
+      "duration_ms"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
