@@ -201,7 +201,7 @@ export const RepositoryIntelligence: React.FC<RepositoryIntelligenceProps> = ({
                   </span>
                 </h2>
                 <p className="text-xs text-slate-400">
-                  AST structure mapping, evidence-backed technology detection &amp; task-focused file ranking.
+                  Import extraction (regex), evidence-backed technology detection &amp; task-focused file ranking.
                 </p>
               </div>
             </div>

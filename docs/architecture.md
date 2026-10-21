@@ -2,7 +2,7 @@
 
 ## 1. System Topology & Architecture Overview
 
-The Autonomous AI Software Engineering Platform is architected as a modular, contract-driven monorepo. Phase 3 introduces the **Repository Intelligence Engine**, encompassing secure filesystem snapshot collection, evidence-backed technology detection, AST architecture summarization, task-focused file retrieval, and database-backed analysis persistence.
+The Autonomous AI Software Engineering Platform is architected as a modular, contract-driven monorepo. Phase 3 introduces the **Repository Intelligence Engine**, encompassing secure filesystem snapshot collection, evidence-backed technology detection, architecture summarization with import extraction (regex), task-focused file retrieval, and database-backed analysis persistence.
 
 ```mermaid
 graph TD
@@ -196,7 +196,7 @@ The Repository Intelligence Engine provides deterministic codebase comprehension
 2. **Allowed Roots Jail**: `ALLOWED_REPO_ROOTS` is required (analysis returns 503 without it). The repository URL must be an absolute local path inside an authorized directory hierarchy; remote URLs are rejected with 400.
 3. **Symlink Containment**: Resolves real path of symlinks; if target escapes repo root, the entry is skipped with reason `SYMLINK_ESCAPE`.
 4. **Zero Secret Leakage**: File paths matching secret patterns (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `credentials.json`, `*secret*`, `*token*`) are strictly excluded.
-5. **Binary Sniffing**: Inspects the first 1KB of each file for null bytes. Binary files are tracked in inventory as `BINARY` but skipped from AST summarization.
+5. **Binary Sniffing**: Inspects the first 1KB of each file for null bytes. Binary files are tracked in inventory as `BINARY` but skipped from import extraction.
 
 ### 5.2 Relevance Ranking Engine
 The relevance ranker scores repository files against natural language engineering prompts:

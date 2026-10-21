@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { Worker, type Job } from 'bullmq';
 import { Redis } from 'ioredis';
 import type { TaskStatus } from '@prisma/client';
@@ -9,6 +10,9 @@ import { config } from './config.js';
 import { logger } from './logger.js';
 
 logger.info('Starting Autonomous Engineer Background Task Worker...');
+
+// Identifies the process that ran a WorkflowRun
+export const WORKER_ID = `${os.hostname()}:${process.pid}`;
 
 let workerRedis: Redis | null = null;
 let worker: Worker<TaskJobPayload> | null = null;
@@ -119,7 +123,7 @@ export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
         data: {
           status: 'RUNNING',
           startedAt,
-          workerId: 'worker-bullmq-01',
+          workerId: WORKER_ID,
         },
       });
     }
@@ -154,7 +158,6 @@ export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
     let repoInspectionMeta: Record<string, unknown> = {
       repositoryUrl: task.repositoryUrl || 'local_workspace_only',
       targetBranch: task.targetBranch,
-      status: 'verified_safe',
       phase: 'PHASE_3_INTELLIGENCE',
     };
 
@@ -221,9 +224,7 @@ export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
         startedAt: new Date(),
         finishedAt: new Date(),
         resultMetadata: {
-          hostExecutionBlocked: true,
-          arbitraryShellPermitted: false,
-          auditPass: true,
+          note: 'Placeholder step: no boundary verification is implemented yet.',
         },
       },
     });

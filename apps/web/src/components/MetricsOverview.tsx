@@ -1,5 +1,5 @@
 import React from 'react';
-import { Layers, ShieldCheck, Cpu, Code2 } from 'lucide-react';
+import { Layers } from 'lucide-react';
 
 interface MetricsOverviewProps {
   taskCount: number;
@@ -16,33 +16,6 @@ export const MetricsOverview: React.FC<MetricsOverviewProps> = ({ taskCount, api
       color: 'text-primary-400',
       bgColor: 'bg-primary-500/10',
       borderColor: 'border-primary-500/20',
-    },
-    {
-      title: 'Worker Boundary',
-      value: 'Secured',
-      label: 'Host shell execution disabled',
-      icon: ShieldCheck,
-      color: 'text-emerald-400',
-      bgColor: 'bg-emerald-500/10',
-      borderColor: 'border-emerald-500/20',
-    },
-    {
-      title: 'AI Service Skeleton',
-      value: 'FastAPI',
-      label: 'Local mock provider ready',
-      icon: Cpu,
-      color: 'text-cyan-400',
-      bgColor: 'bg-cyan-500/10',
-      borderColor: 'border-cyan-500/20',
-    },
-    {
-      title: 'Shared Contracts',
-      value: 'v1 Active',
-      label: 'Zod & Pydantic synchrony',
-      icon: Code2,
-      color: 'text-purple-400',
-      bgColor: 'bg-purple-500/10',
-      borderColor: 'border-purple-500/20',
     },
   ];
 
@@ -70,6 +43,18 @@ export const MetricsOverview: React.FC<MetricsOverviewProps> = ({ taskCount, api
           </div>
         );
       })}
+      {/* Only the task count is real; no other metrics are collected yet */}
+      <div className="p-5 rounded-xl bg-surface border border-surface-border sm:col-span-1 lg:col-span-3 flex flex-col justify-between">
+        <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+          Execution &amp; Verification Metrics
+        </span>
+        <div>
+          <div className="text-2xl font-bold font-mono text-slate-500">Coming soon</div>
+          <p className="text-xs text-slate-400 mt-1">
+            No worker, sandbox or verification metrics are collected yet.
+          </p>
+        </div>
+      </div>
     </div>
   );
 };

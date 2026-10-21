@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Job } from 'bullmq';
 import { prisma } from '../src/services/prisma.js';
@@ -84,6 +85,16 @@ describe('Task worker retries (B3) and cancellation (B4)', () => {
     expect(taskRow.status).toBe('COMPLETED');
     expect(runRow.status).toBe('COMPLETED');
     expect(audits.map((a) => a.eventType)).toEqual(['TASK_COMPLETED']);
+  });
+
+  it('records the real worker identity and no fabricated verification results', async () => {
+    await processTaskJob(makeJob(0));
+
+    expect(runRow.workerId).toBe(`${os.hostname()}:${process.pid}`);
+    const metadata = JSON.stringify(steps.map((s) => s.resultMetadata));
+    expect(metadata).not.toMatch(/auditPass|verified_safe|worker-bullmq-01/);
+    const boundaries = steps.find((s) => s.stepType === 'VERIFY_BOUNDARIES');
+    expect(boundaries?.resultMetadata.note).toMatch(/no boundary verification is implemented/);
   });
 
   it('marks the task and run FAILED only on the final attempt', async () => {

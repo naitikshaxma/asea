@@ -32,12 +32,7 @@ function formatTaskResponse(task: any): TaskResponse {
     completedAt: task.completedAt instanceof Date ? task.completedAt.toISOString() : task.completedAt,
     failureCode: task.failureCode ?? undefined,
     failureReason: task.failureReason ?? undefined,
-    executionMetadata: task.executionMetadata ?? {
-      workerId: 'worker-bullmq-01',
-      sandboxType: 'disposable-container',
-      phase: 'PHASE_2_PERSISTENT_PIPELINE',
-      note: 'Task backed by PostgreSQL and BullMQ job queue.',
-    },
+    executionMetadata: task.executionMetadata ?? undefined,
     runs: task.runs
       ? task.runs.map((r: any) => ({
           id: r.id,

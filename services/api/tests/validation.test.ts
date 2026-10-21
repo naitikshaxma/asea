@@ -116,6 +116,32 @@ describe('API Validation and Task Routes', () => {
     expect(fields).toContain('repositoryUrl');
   });
 
+  it('GET /workspaces/:id/tasks/:taskId does not invent executionMetadata when none is stored', async () => {
+    mockMembership();
+    vi.spyOn(prisma.task, 'findFirst').mockResolvedValue({
+      id: 'task-2',
+      workspaceId,
+      creatorId: user.id,
+      title: validPayload.title,
+      description: validPayload.description,
+      taskType: 'BUG_INVESTIGATION',
+      priority: 'NORMAL',
+      status: 'QUEUED',
+      executionMetadata: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      runs: [],
+    } as any);
+
+    const res = await request(app)
+      .get(`/api/v1/workspaces/${workspaceId}/tasks/task-2`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).not.toHaveProperty('executionMetadata');
+    expect(JSON.stringify(res.body)).not.toMatch(/sandboxType|worker-bullmq-01/);
+  });
+
   it('POST /workspaces/:id/tasks rejects unauthenticated requests with 401', async () => {
     const res = await request(app).post(`/api/v1/workspaces/${workspaceId}/tasks`).send(validPayload);
 

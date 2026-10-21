@@ -73,7 +73,7 @@ Phase 3 implements the **Repository Intelligence Engine**, giving the platform t
 | **Delivery Guarantee** | None | Transactional Outbox Pattern | **Transactional Outbox Pattern** | Dead-letter queue inspection UI |
 | **User & Tenant Auth** | Open / None | Bcrypt + JWT + HttpOnly Cookies + RBAC | **Hardened Multi-Tenant Authorization** | SSO / SAML / WebAuthn MFA |
 | **Repository Attachment** | Local checkout mode | Workspace Repositories in PostgreSQL | **Repository Snapshot Collection & Analysis** | Real GitHub App & Webhook listener |
-| **Repository Intelligence** | None | Basic metadata record | **Tech Detection, AST Mapping & File Retrieval** | Semantic vector embeddings |
+| **Repository Intelligence** | None | Basic metadata record | **Tech Detection, Import Extraction (regex) & File Retrieval** | Semantic vector embeddings |
 | **Code Execution** | Host shell disabled | Deterministic Safe Worker Steps | **Deterministic Safe Worker Steps** | Disposable gVisor / MicroVM sandboxes |
 | **AI Reasoning Engine** | FastAPI mock skeleton | FastAPI mock with validated contract | FastAPI mock with validated contract | LangGraph / multi-agent reasoning loop |
 
@@ -196,13 +196,13 @@ npm run dev:agent
 Typecheck and the TypeScript test suites need step 2 of the setup (contracts built, Prisma Client generated). They do not need a running database.
 
 ```bash
-# Run all Node.js and Frontend tests (76 API tests + 10 Web tests = 86 tests):
+# Run all Node.js and Frontend tests (78 API tests + 11 Web tests = 89 tests):
 npm test
 
-# Run API test suite individually (76 tests):
+# Run API test suite individually (78 tests):
 npm run test:api
 
-# Run Web test suite individually (10 tests):
+# Run Web test suite individually (11 tests):
 npm run test:web
 
 # Run Python Pytest test suite (5 agent tests):

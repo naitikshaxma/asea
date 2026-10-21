@@ -70,7 +70,7 @@ The repository intelligence engine executes deep filesystem analysis while stric
 - Excluded secret files are categorized as `SECRET_EXCLUDED` in the inventory without reading their file contents or persisting their contents to PostgreSQL.
 
 ### 4.3 Binary Sniffing & Safe Skipping
-- To prevent memory exhaustion and corrupt AST parsing, file headers (first 1,024 bytes) are inspected for null bytes (`0x00`) or non-printable control characters.
+- To prevent memory exhaustion and corrupt text parsing, file headers (first 1,024 bytes) are inspected for null bytes (`0x00`) or non-printable control characters.
 - Detected binary files are categorized as `BINARY` and excluded from source analysis.
 
 ### 4.4 Hard Resource Boundaries & DoS Limits

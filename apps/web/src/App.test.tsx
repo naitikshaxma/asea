@@ -124,6 +124,19 @@ describe('Web Application Dashboard Shell', () => {
     });
   });
 
+  it('shows honest coming-soon states instead of unimplemented sandbox and metric claims', async () => {
+    vi.spyOn(client, 'fetchHealth').mockRejectedValue(new Error('Network error'));
+
+    render(<App />);
+
+    // One in MetricsOverview, one in ExecutionPanel
+    expect(await screen.findAllByText('Coming soon')).toHaveLength(2);
+    expect(screen.getByText(/No sandbox exists yet/)).toBeInTheDocument();
+    for (const claim of [/OCI Container/, /cgroup/, /syscall/i, /^Secured$/, /Enforced Boundary/, /Pydantic synchrony/]) {
+      expect(screen.queryByText(claim)).not.toBeInTheDocument();
+    }
+  });
+
   it('requires a signed-in workspace before tasks can be submitted', async () => {
     vi.spyOn(client, 'fetchHealth').mockRejectedValue(new Error('Network error'));
     const submitSpy = vi.spyOn(client, 'submitWorkspaceTask');
@@ -269,7 +282,8 @@ describe('Web Application Dashboard Shell', () => {
     await waitFor(() => {
       expect(screen.getByText('Repository Intelligence Engine')).toBeInTheDocument();
       expect(screen.getByText('Phase 3')).toBeInTheDocument();
-      expect(screen.getByText(/AST structure mapping/i)).toBeInTheDocument();
+      expect(screen.getByText(/Import extraction \(regex\)/i)).toBeInTheDocument();
+      expect(screen.queryByText(/\bAST\b/)).not.toBeInTheDocument();
     });
   });
 
