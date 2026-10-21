@@ -1,0 +1,38 @@
+{
+  "name": "autonomous-engineer-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Monorepo for the Autonomous AI Software Engineering Platform",
+  "workspaces": [
+    "packages/*",
+    "services/api",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n \"api,web\" -c \"blue,magenta\" \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:api": "npm run dev --workspace=@autonomous-engineer/api",
+    "dev:web": "npm run dev --workspace=@autonomous-engineer/web",
+    "dev:agent": "python -m uvicorn app.main:app --app-dir services/agent-service --port 8000 --reload",
+    "build": "npm run build:contracts && npm run build:api && npm run build:web",
+    "build:contracts": "npm run build --workspace=@autonomous-engineer/contracts",
+    "build:api": "npm run build --workspace=@autonomous-engineer/api",
+    "build:web": "npm run build --workspace=@autonomous-engineer/web",
+    "test": "npm run test:api && npm run test:web",
+    "test:api": "npm run test --workspace=@autonomous-engineer/api",
+    "test:web": "npm run test --workspace=@autonomous-engineer/web",
+    "test:python": "node scripts/run-python-tests.js",
+    "test:all": "npm run test && npm run test:python",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run typecheck",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f",
+    "clean": "npm run clean --workspaces --if-present"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.3"
+  }
+}

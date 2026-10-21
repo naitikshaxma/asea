@@ -1,0 +1,72 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck-and-node-tests:
+    name: TypeScript, Node API & Web Frontend CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: 'npm'
+
+      - name: Install Monorepo Dependencies
+        run: npm ci
+
+      - name: Run Monorepo Type Checks
+        run: npm run typecheck
+
+      - name: Run API Tests (Node.js & Express)
+        run: npm run test:api
+
+      - name: Run Frontend Tests (React & Vitest)
+        run: npm run test:web
+
+      - name: Run Monorepo Build (Contracts, API & Web)
+        run: npm run build
+
+  python-agent-tests:
+    name: Python Agent Service CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/agent-service/requirements.txt
+
+      - name: Run Agent Service Pytest
+        run: |
+          cd services/agent-service
+          pytest
+
+  docker-compose-validation:
+    name: Validate Docker Compose Configuration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Validate Compose File Syntax
+        run: docker compose config
