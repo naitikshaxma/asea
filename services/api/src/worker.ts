@@ -6,6 +6,7 @@ import { TASK_QUEUE_NAME, type TaskJobPayload } from './services/queueService.js
 import { prisma, disconnectPrisma } from './services/prisma.js';
 import { validateTaskTransition, validateRunTransition } from './services/workflowStateMachine.js';
 import { createAndRunAnalysis } from './services/intelligence/repositoryAnalysisService.js';
+import { runVerificationStep } from './services/verification/verificationService.js';
 import { config } from './config.js';
 import { logger } from './logger.js';
 
@@ -129,6 +130,8 @@ export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
 
   const { runId, attemptNumber } = await resolveAttemptRun(job);
   logger.info(`[Worker] Task ${taskId} attempt ${attemptNumber} uses run ${runId}`);
+  const attempt = job.attemptsMade + 1;
+  const maxAttempts = job.opts.attempts ?? 1;
 
   try {
     // Transition to RUNNING
@@ -180,86 +183,112 @@ export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
       throw new Error('Simulated worker fault for test verification');
     }
 
-    // Step 2: Repository Inspection & Intelligence
-    let repoInspectionMeta: Record<string, unknown> = {
-      repositoryUrl: task.repositoryUrl || 'local_workspace_only',
-      targetBranch: task.targetBranch,
-      phase: 'PHASE_3_INTELLIGENCE',
-    };
+    let lastStep: string;
+    if (task.taskType === 'VERIFICATION') {
+      // Step 2: ASEA static analysis; the placeholder steps don't apply
+      const stepStartedAt = new Date();
+      const resultMetadata = await runVerificationStep({
+        taskId,
+        workspaceId,
+        actorId: task.creatorId,
+        attemptNumber,
+        isFinalAttempt: attempt >= maxAttempts,
+      });
+      await prisma.workflowStep.create({
+        data: {
+          workflowRunId: runId,
+          stepType: 'STATIC_ANALYSIS',
+          stepStatus: 'COMPLETED',
+          stepOrder: 2,
+          startedAt: stepStartedAt,
+          finishedAt: new Date(),
+          resultMetadata,
+        },
+      });
+      lastStep = 'STATIC_ANALYSIS';
+    } else {
+      // Step 2: Repository Inspection & Intelligence
+      let repoInspectionMeta: Record<string, unknown> = {
+        repositoryUrl: task.repositoryUrl || 'local_workspace_only',
+        targetBranch: task.targetBranch,
+        phase: 'PHASE_3_INTELLIGENCE',
+      };
 
-    if (task.repositoryId) {
-      try {
-        const analysis = await createAndRunAnalysis(task.repositoryId, workspaceId);
-        repoInspectionMeta = {
-          ...repoInspectionMeta,
-          analysisId: analysis.id,
-          technologies: analysis.technologies.map((t) => t.name),
-          eligibleFiles: analysis.statistics?.eligibleFiles,
-        };
-      } catch (err: unknown) {
-        repoInspectionMeta['analysisNote'] = `Auto-analysis skipped: ${
-          err instanceof Error ? err.message : String(err)
-        }`;
+      if (task.repositoryId) {
+        try {
+          const analysis = await createAndRunAnalysis(task.repositoryId, workspaceId);
+          repoInspectionMeta = {
+            ...repoInspectionMeta,
+            analysisId: analysis.id,
+            technologies: analysis.technologies.map((t) => t.name),
+            eligibleFiles: analysis.statistics?.eligibleFiles,
+          };
+        } catch (err: unknown) {
+          repoInspectionMeta['analysisNote'] = `Auto-analysis skipped: ${
+            err instanceof Error ? err.message : String(err)
+          }`;
+        }
       }
-    }
 
-    await prisma.workflowStep.create({
-      data: {
-        workflowRunId: runId,
-        stepType: 'INSPECT_REPOSITORY',
-        stepStatus: 'COMPLETED',
-        stepOrder: 2,
-        startedAt: new Date(),
-        finishedAt: new Date(),
-        resultMetadata: repoInspectionMeta as any,
-      },
-    });
-
-    if ((await honourCancellation(taskId, runId, 'Task cancelled by user after INSPECT_REPOSITORY.')) === null) {
-      return;
-    }
-
-    // Step 3: Spec & Plan Generation
-    await prisma.workflowStep.create({
-      data: {
-        workflowRunId: runId,
-        stepType: 'GENERATE_SPEC',
-        stepStatus: 'COMPLETED',
-        stepOrder: 3,
-        startedAt: new Date(),
-        finishedAt: new Date(),
-        resultMetadata: {
-          taskType: task.taskType,
-          phase: 'PHASE_2_DETERMINISTIC_PIPELINE',
-          note: 'Task parsed and queued for future Phase 3 autonomous agent synthesis.',
+      await prisma.workflowStep.create({
+        data: {
+          workflowRunId: runId,
+          stepType: 'INSPECT_REPOSITORY',
+          stepStatus: 'COMPLETED',
+          stepOrder: 2,
+          startedAt: new Date(),
+          finishedAt: new Date(),
+          resultMetadata: repoInspectionMeta as any,
         },
-      },
-    });
+      });
 
-    if ((await honourCancellation(taskId, runId, 'Task cancelled by user after GENERATE_SPEC.')) === null) {
-      return;
-    }
+      if ((await honourCancellation(taskId, runId, 'Task cancelled by user after INSPECT_REPOSITORY.')) === null) {
+        return;
+      }
 
-    // Step 4: Boundary & Safety Audit
-    await prisma.workflowStep.create({
-      data: {
-        workflowRunId: runId,
-        stepType: 'VERIFY_BOUNDARIES',
-        stepStatus: 'COMPLETED',
-        stepOrder: 4,
-        startedAt: new Date(),
-        finishedAt: new Date(),
-        resultMetadata: {
-          note: 'Placeholder step: no boundary verification is implemented yet.',
+      // Step 3: Spec & Plan Generation
+      await prisma.workflowStep.create({
+        data: {
+          workflowRunId: runId,
+          stepType: 'GENERATE_SPEC',
+          stepStatus: 'COMPLETED',
+          stepOrder: 3,
+          startedAt: new Date(),
+          finishedAt: new Date(),
+          resultMetadata: {
+            taskType: task.taskType,
+            phase: 'PHASE_2_DETERMINISTIC_PIPELINE',
+            note: 'Task parsed and queued for future Phase 3 autonomous agent synthesis.',
+          },
         },
-      },
-    });
+      });
+
+      if ((await honourCancellation(taskId, runId, 'Task cancelled by user after GENERATE_SPEC.')) === null) {
+        return;
+      }
+
+      // Step 4: Boundary & Safety Audit
+      await prisma.workflowStep.create({
+        data: {
+          workflowRunId: runId,
+          stepType: 'VERIFY_BOUNDARIES',
+          stepStatus: 'COMPLETED',
+          stepOrder: 4,
+          startedAt: new Date(),
+          finishedAt: new Date(),
+          resultMetadata: {
+            note: 'Placeholder step: no boundary verification is implemented yet.',
+          },
+        },
+      });
+      lastStep = 'VERIFY_BOUNDARIES';
+    }
 
     // Mark Task & Run as COMPLETED, unless cancellation was requested meanwhile
     const statusBeforeCompletion = await honourCancellation(
       taskId,
       runId,
-      'Task cancelled by user after VERIFY_BOUNDARIES.'
+      `Task cancelled by user after ${lastStep}.`
     );
     if (statusBeforeCompletion === null) {
       return;
@@ -319,8 +348,6 @@ export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
 
     // B3: FAILED is terminal for the task, so only the final attempt sets it.
     // Earlier attempts leave the task RUNNING; the retry gets a new run.
-    const attempt = job.attemptsMade + 1;
-    const maxAttempts = job.opts.attempts ?? 1;
     if (attempt < maxAttempts) {
       logger.warn(`[Worker] Task ${taskId} attempt ${attempt}/${maxAttempts} failed; retrying`, {
         runId,

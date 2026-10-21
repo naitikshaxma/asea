@@ -11,6 +11,7 @@ import { workspacesRouter } from './routes/workspaces.js';
 import { repositoriesRouter } from './routes/repositories.js';
 import { intelligenceRouter } from './routes/intelligence.js';
 import { tasksRouter } from './routes/tasks.js';
+import { verificationRouter } from './routes/verification.js';
 import { config, type EnvConfig } from './config.js';
 
 export function createApp(customConfig?: Partial<EnvConfig>): Application {
@@ -45,6 +46,7 @@ export function createApp(customConfig?: Partial<EnvConfig>): Application {
   app.use('/api/v1', repositoriesRouter);
   app.use('/api/v1', intelligenceRouter);
   app.use('/api/v1', tasksRouter);
+  app.use('/api/v1', verificationRouter);
 
   // 404 handler
   app.use(notFoundHandler);

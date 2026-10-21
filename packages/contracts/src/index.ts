@@ -7,3 +7,4 @@ export * from './workspaces.js';
 export * from './repositories.js';
 export * from './intelligence.js';
 export * from './verification.js';
+export * from './verificationApi.js';

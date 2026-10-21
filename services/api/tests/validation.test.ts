@@ -76,6 +76,78 @@ describe('API Validation and Task Routes', () => {
     expect(tx.outboxEvent.create).toHaveBeenCalledOnce();
   });
 
+  describe('VERIFICATION tasks', () => {
+    const verificationPayload = {
+      title: 'Verify export endpoint',
+      description: 'Only authenticated users may export projects.',
+      taskType: 'VERIFICATION',
+      repositoryId: 'repo-val-01',
+      verification: { baseSha: 'a1b2c3d', headSha: 'b'.repeat(40), authorType: 'AI' },
+    };
+
+    function stubTransaction() {
+      const now = new Date();
+      const tx = {
+        task: { create: vi.fn().mockImplementation(async ({ data }) => ({ ...data, id: 'task-v', createdAt: now, updatedAt: now })) },
+        workflowRun: { create: vi.fn().mockResolvedValue({ id: 'run-v', taskId: 'task-v', attemptNumber: 1, status: 'QUEUED' }) },
+        verificationRun: { create: vi.fn().mockResolvedValue({ id: 'vr-1' }) },
+        outboxEvent: { create: vi.fn().mockResolvedValue({ id: 'evt-v' }) },
+      };
+      vi.spyOn(prisma, '$transaction').mockImplementation((async (fn: any) => fn(tx)) as any);
+      vi.spyOn(prisma.outboxEvent, 'findMany').mockResolvedValue([]);
+      return tx;
+    }
+
+    const submit = (body: object) =>
+      request(app).post(`/api/v1/workspaces/${workspaceId}/tasks`).set('Authorization', `Bearer ${token}`).send(body);
+
+    it('creates a QUEUED VerificationRun with the inputs in the same transaction as the task', async () => {
+      mockMembership();
+      vi.spyOn(prisma.repository, 'findFirst').mockResolvedValue({ id: 'repo-val-01', workspaceId } as any);
+      const tx = stubTransaction();
+
+      const res = await submit(verificationPayload);
+
+      expect(res.status).toBe(201);
+      expect(res.body.taskType).toBe('VERIFICATION');
+      expect(tx.verificationRun.create).toHaveBeenCalledWith({
+        data: {
+          workspaceId,
+          repositoryId: 'repo-val-01',
+          taskId: 'task-v',
+          baseSha: 'a1b2c3d',
+          headSha: 'b'.repeat(40),
+          requirement: verificationPayload.description,
+          authorType: 'AI',
+          status: 'QUEUED',
+        },
+      });
+    });
+
+    it('requires repositoryId and verification inputs, with hex SHAs', async () => {
+      mockMembership();
+      const res = await submit({ ...verificationPayload, repositoryId: undefined, verification: undefined });
+      expect(res.status).toBe(400);
+      const fields = res.body.error.details.map((d: { field: string }) => d.field);
+      expect(fields).toEqual(expect.arrayContaining(['repositoryId', 'verification']));
+
+      const badSha = await submit({ ...verificationPayload, verification: { baseSha: 'main', headSha: 'HEAD' } });
+      expect(badSha.status).toBe(400);
+    });
+
+    it('rejects verification inputs on other task types and repositories from other workspaces', async () => {
+      mockMembership();
+      const other = await submit({ ...verificationPayload, taskType: 'CODE_REVIEW' });
+      expect(other.status).toBe(400);
+
+      vi.spyOn(prisma.repository, 'findFirst').mockResolvedValue(null);
+      const tx = stubTransaction();
+      const foreign = await submit(verificationPayload);
+      expect(foreign.status).toBe(400);
+      expect(tx.verificationRun.create).not.toHaveBeenCalled();
+    });
+  });
+
   it('POST /workspaces/:id/tasks returns 500 when the database fails instead of faking success', async () => {
     mockMembership();
     vi.spyOn(prisma, '$transaction').mockRejectedValue(new Error('connection refused'));

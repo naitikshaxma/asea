@@ -7,6 +7,7 @@ export const TaskTypeEnum = z.enum([
   'TEST_GENERATION',
   'CODE_REVIEW',
   'CI_DIAGNOSIS',
+  'VERIFICATION',
 ]);
 
 export type TaskType = z.infer<typeof TaskTypeEnum>;
@@ -88,6 +89,16 @@ export const WorkflowRunResponseSchema = z.object({
 
 export type WorkflowRunResponse = z.infer<typeof WorkflowRunResponseSchema>;
 
+// Inputs of a VERIFICATION task: the change baseSha..headSha in the task's
+// repository is verified against the task description (the requirement).
+export const VerificationTaskInputSchema = z.object({
+  baseSha: z.string().regex(/^[0-9a-f]{7,40}$/i, 'Must be a 7-40 character hex commit SHA'),
+  headSha: z.string().regex(/^[0-9a-f]{7,40}$/i, 'Must be a 7-40 character hex commit SHA'),
+  authorType: z.enum(['AI', 'HUMAN', 'UNKNOWN']).default('UNKNOWN'),
+});
+
+export type VerificationTaskInput = z.infer<typeof VerificationTaskInputSchema>;
+
 export const TaskSubmissionRequestSchema = z.object({
   title: z
     .string()
@@ -109,6 +120,18 @@ export const TaskSubmissionRequestSchema = z.object({
   workspaceId: z.string().optional(),
   targetBranch: z.string().max(100).optional().default('main'),
   idempotencyKey: z.string().max(128).optional(),
+  verification: VerificationTaskInputSchema.optional(),
+}).superRefine((task, ctx) => {
+  if (task.taskType === 'VERIFICATION') {
+    if (!task.repositoryId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['repositoryId'], message: 'Required for VERIFICATION tasks' });
+    }
+    if (!task.verification) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['verification'], message: 'Required for VERIFICATION tasks' });
+    }
+  } else if (task.verification) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['verification'], message: 'Only allowed for VERIFICATION tasks' });
+  }
 });
 
 export type TaskSubmissionRequest = z.infer<typeof TaskSubmissionRequestSchema>;

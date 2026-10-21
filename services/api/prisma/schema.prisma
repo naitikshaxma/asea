@@ -68,6 +68,7 @@ enum TaskType {
   TEST_GENERATION
   CODE_REVIEW
   CI_DIAGNOSIS
+  VERIFICATION
 }
 
 enum TaskPriority {
@@ -101,6 +102,7 @@ enum WorkflowStepType {
   GENERATE_SPEC
   VERIFY_BOUNDARIES
   SIMULATE_EXECUTION
+  STATIC_ANALYSIS
 }
 
 enum WorkflowStepStatus {
@@ -225,6 +227,7 @@ model Task {
   repository        Repository?    @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
   creator           User           @relation("TaskCreator", fields: [creatorId], references: [id], onDelete: Cascade)
   runs              WorkflowRun[]
+  verificationRuns  VerificationRun[]
   approvals         Approval[]
 
   @@index([workspaceId])
@@ -363,6 +366,7 @@ model VerificationRun {
   id           String                @id @default(uuid())
   workspaceId  String
   repositoryId String
+  taskId       String?
   baseSha      String
   headSha      String
   requirement  String
@@ -377,10 +381,12 @@ model VerificationRun {
 
   workspace    Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   repository   Repository            @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  task         Task?                 @relation(fields: [taskId], references: [id], onDelete: SetNull)
   findings     VerificationFinding[]
 
   @@index([workspaceId])
   @@index([repositoryId])
+  @@index([taskId])
   @@index([status])
 }
 

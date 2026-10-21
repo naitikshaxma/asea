@@ -106,7 +106,7 @@ npm run dev:agent
 
 ### Run All Tests
 ```bash
-# Run TypeScript tests (90 API tests + 11 Web tests = 101 tests)
+# Run TypeScript tests (111 API tests + 11 Web tests = 122 tests)
 npm test
 
 # Run API test suite individually
@@ -165,6 +165,13 @@ npm run build
 - `GET /api/v1/workspaces/:workspaceId/tasks/:taskId` — Task details
 - `POST /api/v1/workspaces/:workspaceId/tasks/:taskId/cancel` — Cancel active task
 - `GET /api/v1/workspaces/:workspaceId/tasks/:taskId/runs` — Task workflow runs and steps
+
+### ASEA Verification
+A `VERIFICATION` task needs `repositoryId` (a registered local git repository inside `ALLOWED_REPO_ROOTS`) and `verification: { baseSha, headSha, authorType: AI|HUMAN|UNKNOWN }`; its description is the requirement. Submitting it creates a QUEUED VerificationRun. The worker builds the diff with `git` (argument list, no shell), calls the agent service's `POST /api/v1/verify/static` at `AI_SERVICE_URL` with `X-Internal-Token: $INTERNAL_SERVICE_TOKEN`, stores the findings, appends hash-chained audit events and records a `STATIC_ANALYSIS` workflow step.
+- `GET /api/v1/workspaces/:workspaceId/verification-runs?taskId=` — Verification runs (latest first), optionally for one task
+- `GET /api/v1/workspaces/:workspaceId/verification-runs/:runId` — One verification run (score and verdict are null until scoring exists)
+- `GET /api/v1/workspaces/:workspaceId/verification-runs/:runId/findings?severity=` — The run's findings
+- `GET /api/v1/workspaces/:workspaceId/verification-runs/:runId/audit/verify` — Checks the run's audit hash chain and that the findings match the digest recorded in it
 
 ---
 

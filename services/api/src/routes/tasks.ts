@@ -99,6 +99,7 @@ tasksRouter.post(
           throw new AppError(400, 'BAD_REQUEST', 'Specified repository does not belong to this workspace');
         }
       }
+      const verification = validated.taskType === 'VERIFICATION' ? validated.verification : undefined;
 
       // Atomic Transaction: Task + Initial Workflow Run + Outbox Event
       const task = await prisma.$transaction(async (tx) => {
@@ -129,6 +130,23 @@ tasksRouter.post(
             status: 'QUEUED',
           },
         });
+
+        // A VERIFICATION task's inputs live on its VerificationRun; the
+        // description is the requirement the change is verified against
+        if (verification) {
+          await tx.verificationRun.create({
+            data: {
+              workspaceId,
+              repositoryId: validated.repositoryId!,
+              taskId: t.id,
+              baseSha: verification.baseSha,
+              headSha: verification.headSha,
+              requirement: validated.description,
+              authorType: verification.authorType,
+              status: 'QUEUED',
+            },
+          });
+        }
 
         await tx.outboxEvent.create({
           data: {

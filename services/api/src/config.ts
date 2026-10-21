@@ -27,6 +27,11 @@ export const EnvSchema = z
 
     // AI Service integration
     AI_SERVICE_URL: z.string().url().default('http://localhost:8000'),
+    // Sent as X-Internal-Token to the agent service; VERIFICATION tasks fail without it
+    INTERNAL_SERVICE_TOKEN: z.string().optional(),
+    AI_SERVICE_TIMEOUT_MS: z.coerce.number().int().positive().default(180000),
+    // Must not exceed the agent service's AGENT_MAX_REQUEST_BYTES
+    VERIFICATION_MAX_REQUEST_BYTES: z.coerce.number().int().positive().default(5242880),
 
     // PostgreSQL Configuration
     DATABASE_URL: z.string().optional(),
