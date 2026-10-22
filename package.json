@@ -7,7 +7,8 @@
   "workspaces": [
     "packages/*",
     "services/api",
-    "apps/*"
+    "apps/*",
+    "e2e"
   ],
   "scripts": {
     "dev": "concurrently -n \"api,web\" -c \"blue,magenta\" \"npm run dev:api\" \"npm run dev:web\"",
@@ -33,6 +34,10 @@
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",
+    "stack:up": "node scripts/stack/stack.mjs up",
+    "stack:down": "node scripts/stack/stack.mjs down",
+    "stack:logs": "node scripts/stack/stack.mjs logs",
+    "e2e": "node scripts/e2e/run.mjs",
     "clean": "npm run clean --workspaces --if-present"
   },
   "devDependencies": {

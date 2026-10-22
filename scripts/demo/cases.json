@@ -1,0 +1,34 @@
+[
+  {
+    "case": "clean",
+    "branch": "demo/clean",
+    "commitMessage": "Add PATCH /projects/<id> to rename a project",
+    "title": "Rename a project",
+    "requirement": "Let a signed-in user rename one of their own projects through PATCH /projects/<id>. The route must require login, the new name must be validated, and the service function must be covered by a test.",
+    "expectedVerdict": "ALLOW"
+  },
+  {
+    "case": "missing_auth",
+    "branch": "demo/missing_auth",
+    "commitMessage": "Add GET /projects/export",
+    "title": "Export projects",
+    "requirement": "Add GET /projects/export, which returns the signed-in user's projects as JSON. Only authenticated users may export their projects.",
+    "expectedVerdict": "HIGH_RISK"
+  },
+  {
+    "case": "no_tests",
+    "branch": "demo/no_tests",
+    "commitMessage": "Add archive_project() to the projects service",
+    "title": "Archive a project",
+    "requirement": "Add a service function that archives one of the user's projects. The new function must be covered by a unit test.",
+    "expectedVerdict": "REVIEW"
+  },
+  {
+    "case": "secret_and_sql",
+    "branch": "demo/secret_and_sql",
+    "commitMessage": "Add project search and the reporting API key",
+    "title": "Search projects",
+    "requirement": "Add a service function that searches the signed-in user's projects by name, with a test. Queries must be parameterised and credentials must come from configuration.",
+    "expectedVerdict": "BLOCK"
+  }
+]

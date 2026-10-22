@@ -1,0 +1,13 @@
+{
+  "name": "@autonomous-engineer/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end tests against the full stack (run with `npm run e2e` from the repository root)",
+  "scripts": {
+    "test:api": "vitest run --config vitest.config.ts"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.5"
+  }
+}

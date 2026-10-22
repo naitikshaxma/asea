@@ -392,3 +392,18 @@ Not verified: the full stack with Redis/BullMQ running (the worker function was 
 - **No UI** for VERIFICATION tasks or findings.
 - **Carried over** from §9.3 and not addressed: S4–S7, B8–B11, B13–B16, B18, registration-time validation of repository URLs (S2 follow-up), the remaining §6.3 docs drift.
 - **Out of scope by decision:** scoring/verdict, LLM agents, Qdrant, LangGraph, GitHub.
+
+---
+
+## 11. Session 3: finishing the product (progress log)
+
+Brief: five phases (core, AI agents, GitHub, frontend, performance + full e2e), all tests plus the e2e suite after each phase, a commit per phase. Branch `session-1-baseline` (continued). This section is appended as work lands so a new session can resume from it.
+
+### 11.1 Phase 1: finish the core
+
+- **§10.3 deferred items** were already done before this session: truncation detection (`1f5199c`, run seal), pinned offline Semgrep ruleset (`a1d75d7`), cancelled runs (`0d682da`).
+- **Policy profiles and deterministic scoring.** `PolicyConfig` (severity weights, category and source multipliers, caps, verdict bands) in Zod and Pydantic; `packages/contracts/schemas/default-policy.json` pins the default (placeholder weights, said so in the code). Engine `POST /api/v1/verify/score`: deduction = weight × category multiplier × source multiplier (4 decimals), score = round-half-up(100 − total) clamped to 0–100, then caps; verdict = first band reached (`allow`, `review`, `high_risk`, `block`); `policy_hash` = sha256 of canonical JSON, pinned to the same value in TS and Python tests. Prisma `PolicyProfile` (one default per workspace, created on first use) and `Verdict` enum; `VerificationRun` gets `policyProfileId`, `policyHash`, `policySnapshot` (taken at submission) and `scoreBreakdown`. Routes `GET|POST /workspaces/:ws/policies`, `GET|PATCH|DELETE …/policies/:id` (admins write; the default cannot be deleted; `CONFLICT` error code added). The worker scores after static analysis, refuses a snapshot that does not match its hash or an engine result scored with another policy, and appends `SCORE_COMPUTED` (score, verdict, policy hash, digest of the breakdown) before sealing. `audit/verify` adds `scoreValid`.
+- **Also:** `GET …/repositories/:id/refs` (local branches with SHAs, needed to pick base/head); `COOKIE_SECURE` is now read (B12 in part) so a production build can run over plain HTTP locally.
+- **E2E harness (built now so every phase can run it).** `compose.stack.yaml` runs Postgres, Redis, API, worker, agent-service and web (nginx serving the Vite build and proxying `/api`); only the web port is published. `scripts/stack/stack.mjs` keeps per-project generated secrets in `.asea/<project>.env` (gitignored). `scripts/demo/create-demo-repo.mjs` builds a deterministic git repo from the fixtures (`main` + `demo/<case>` branches, `scripts/demo/cases.json`) into the `repos` volume. `npm run e2e` (`scripts/e2e/run.mjs`) starts project `asea-e2e` on :18080, runs `e2e/` (Vitest) and tears it down (`E2E_KEEP_STACK=1` keeps it).
+
+Results at the end of Phase 1: typecheck pass; `test:api` 161 passed (was 128); `test:web` 11; `test:python` 92 (was 68); `build` pass; `npm run e2e` 6 passed (the four fixtures give allow / high_risk / review / block with the expected findings and a valid chain; a score edited in SQL gives `scoreValid: false`). Migrations apply to an empty Postgres 16 with no drift. First e2e attempt failed on the web healthcheck (`localhost` resolved to IPv6 in Alpine; fixed to 127.0.0.1).

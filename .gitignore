@@ -77,3 +77,10 @@ Thumbs.db
 *.sqlite3
 pgdata/
 redisdata/
+
+# Full-stack env files with generated secrets (scripts/stack/stack.mjs)
+.asea/
+
+# Playwright output
+e2e/test-results/
+e2e/playwright-report/

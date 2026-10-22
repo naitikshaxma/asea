@@ -1,0 +1,14 @@
+**/node_modules
+**/dist
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/*.tsbuildinfo
+.git
+.asea
+.env
+.env.*
+!.env.example
+e2e/test-results
+e2e/playwright-report
+services/agent-service/rules/semgrep/p-python.json
