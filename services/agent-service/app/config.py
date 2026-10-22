@@ -12,10 +12,21 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     LOG_LEVEL: str = "INFO"
 
-    # LLM Settings - purely optional for Phase 1 local development
+    # LLM behind the negative-space, architecture and reporter agents (app/llm).
+    # "fake" is deterministic and needs no key (tests, CI, keyless local runs);
+    # "anthropic" needs LLM_API_KEY. MODEL_NAME empty = the provider's default.
+    LLM_PROVIDER: str = "fake"
     LLM_API_KEY: Optional[str] = None
-    LLM_PROVIDER: str = "local_mock"
-    MODEL_NAME: str = "mock-agent-v1"
+    MODEL_NAME: str = ""
+    LLM_EFFORT: str = "high"
+    # One LLM request; one agent attempt (which may make several requests); attempts per agent
+    LLM_TIMEOUT_SECONDS: float = 120
+    AGENT_TIMEOUT_SECONDS: float = 240
+    AGENT_MAX_ATTEMPTS: int = 2
+
+    # Repository index (app/rag). Empty QDRANT_URL = in-memory Qdrant (lost on restart)
+    QDRANT_URL: Optional[str] = None
+    QDRANT_API_KEY: Optional[str] = None
 
     # Worker / sandbox boundary
     EXECUTION_SANDBOX_ENABLED: bool = False

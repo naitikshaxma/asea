@@ -4,7 +4,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.routers import health, analyze, verify
+from app.routers import health, analyze, verify, pipeline
 from app.schemas import ApiErrorEnvelope, ApiErrorDetail, ValidationErrorDetail
 from app.security import (
     InternalTokenMiddleware,
@@ -65,6 +65,7 @@ async def validation_exception_handler(
 app.include_router(health.router)
 app.include_router(analyze.router)
 app.include_router(verify.router)
+app.include_router(pipeline.router)
 
 
 if __name__ == "__main__":

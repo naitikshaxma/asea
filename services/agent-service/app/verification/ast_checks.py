@@ -117,10 +117,10 @@ def is_test_file(path: str) -> bool:
     )
 
 
-def _name_of(node: ast.expr) -> str | None:
+def name_of(node: ast.expr) -> str | None:
     """Decorator or callee name: `x` for x, a.x and x(...)."""
     if isinstance(node, ast.Call):
-        return _name_of(node.func)
+        return name_of(node.func)
     if isinstance(node, ast.Name):
         return node.id
     if isinstance(node, ast.Attribute):
@@ -128,7 +128,7 @@ def _name_of(node: ast.expr) -> str | None:
     return None
 
 
-def _is_route_decorator(node: ast.expr) -> bool:
+def is_route_decorator(node: ast.expr) -> bool:
     return isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ROUTE_DECORATOR_ATTRS
 
 
@@ -188,13 +188,13 @@ class _Checker:
         return self.findings
 
     def check_route(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-        if not any(_is_route_decorator(d) for d in node.decorator_list):
+        if not any(is_route_decorator(d) for d in node.decorator_list):
             return
         header = {node.lineno} | {d.lineno for d in node.decorator_list}
         if not header & self.changes.touched:
             return
-        if not any(_name_of(d) in self.auth_decorators for d in node.decorator_list):
-            route = next(d for d in node.decorator_list if _is_route_decorator(d))
+        if not any(name_of(d) in self.auth_decorators for d in node.decorator_list):
+            route = next(d for d in node.decorator_list if is_route_decorator(d))
             self.report(ROUTE_NO_AUTH, node.lineno, [self.line_text(route.lineno), self.line_text(node.lineno)])
 
     def check_secret(self, node: ast.Assign | ast.AnnAssign) -> None:
@@ -206,7 +206,7 @@ class _Checker:
             return
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
         for target in targets:
-            name = _name_of(target)
+            name = name_of(target)
             if name and SECRET_NAME.search(name):
                 # Never echo the value itself
                 self.report(HARDCODED_SECRET, node.lineno, [f"{name} = <redacted string, {len(text)} characters>"])
@@ -243,7 +243,7 @@ class _Checker:
         for fn in candidates:
             if fn.name.startswith("_") or fn.lineno not in self.changes.added:
                 continue
-            if any(_is_route_decorator(d) for d in fn.decorator_list):
+            if any(is_route_decorator(d) for d in fn.decorator_list):
                 continue  # tests reach route handlers through their URL, not their name
             definition = re.compile(rf"\bdef\s+{re.escape(fn.name)}\b")
             if any(definition.search(text) for text in self.changes.removed_text):

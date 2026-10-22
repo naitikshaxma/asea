@@ -20,6 +20,19 @@ from app.verification.contract import (
     VerificationRequest,
 )
 from app.verification.policy import PolicyConfig, ScoreRequest, ScoreResult
+from app.pipeline.contract import (
+    AgentFinishedEvent,
+    AgentRun,
+    AgentStartedEvent,
+    ErrorEvent,
+    IndexRequest,
+    IndexResponse,
+    IndexStatus,
+    PipelineRequest,
+    PipelineResult,
+    Report,
+    ResultEvent,
+)
 
 ZOD_SCHEMA_FILE = (
     Path(__file__).resolve().parents[3] / "packages" / "contracts" / "schemas" / "asea-contract.schema.json"
@@ -33,6 +46,17 @@ MODELS = {
     "PolicyConfig": PolicyConfig,
     "ScoreRequest": ScoreRequest,
     "ScoreResult": ScoreResult,
+    "PipelineRequest": PipelineRequest,
+    "PipelineResult": PipelineResult,
+    "AgentRun": AgentRun,
+    "Report": Report,
+    "AgentStartedEvent": AgentStartedEvent,
+    "AgentFinishedEvent": AgentFinishedEvent,
+    "ResultEvent": ResultEvent,
+    "ErrorEvent": ErrorEvent,
+    "IndexRequest": IndexRequest,
+    "IndexResponse": IndexResponse,
+    "IndexStatus": IndexStatus,
 }
 
 CONSTRAINT_KEYWORDS = (

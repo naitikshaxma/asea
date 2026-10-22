@@ -88,6 +88,8 @@ Verdict = Literal["allow", "review", "high_risk", "block"]
 class ScoreRequest(BaseModel):
     findings: list[Finding]
     policy: PolicyConfig
+    # Agents that did not complete; an incomplete verification is never allowed
+    incomplete_agents: list[str] = Field(default_factory=list)
 
 
 class ScoreBreakdownItem(BaseModel):
@@ -115,6 +117,12 @@ class CapApplied(BaseModel):
     lowered_score: bool
 
 
+class VerdictAdjustment(BaseModel):
+    reason: str
+    from_verdict: Verdict
+    to_verdict: Verdict
+
+
 class ScoreResult(BaseModel):
     score: int = Field(ge=0, le=100)
     verdict: Verdict
@@ -126,6 +134,8 @@ class ScoreResult(BaseModel):
     # Largest deduction first
     breakdown: list[ScoreBreakdownItem]
     caps_applied: list[CapApplied]
+    # Verdict changes made after the bands, e.g. allow -> review when agents did not complete
+    adjustments: list[VerdictAdjustment] = Field(default_factory=list)
 
 
 def _normalize(value: Any) -> Any:

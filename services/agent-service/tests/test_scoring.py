@@ -2,7 +2,6 @@
 
 import json
 import random
-from pathlib import Path
 
 import pytest
 
@@ -10,11 +9,9 @@ from app.verification.contract import Finding
 from app.verification.policy import PolicyConfig, policy_hash
 from app.verification.scoring import score_findings
 from app.verification.static_analysis import run_static_analysis
+from tests.conftest import DEFAULT_POLICY_FILE
 from tests.fixture_support import CASES, load_case
 
-DEFAULT_POLICY_FILE = (
-    Path(__file__).resolve().parents[3] / "packages" / "contracts" / "schemas" / "default-policy.json"
-)
 # Pinned on both sides: services/api/tests/policy/policyService.test.ts expects the same hash
 DEFAULT_POLICY_HASH = "3d2ba0a91b23ddfc65968bb2d62f08bd6e5ece14c832ae5f07f133eb75ac1391"
 
@@ -25,11 +22,6 @@ EXPECTED = {
     "missing_auth": (65, "high_risk"),
     "secret_and_sql": (15, "block"),
 }
-
-
-@pytest.fixture
-def default_policy() -> PolicyConfig:
-    return PolicyConfig.model_validate(json.loads(DEFAULT_POLICY_FILE.read_text(encoding="utf-8")))
 
 
 def finding(fid: str, severity: str, category: str = "static", source: str = "deterministic") -> Finding:

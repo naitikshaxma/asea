@@ -1,6 +1,6 @@
-# The whole product in containers: Postgres, Redis, the API, the BullMQ worker,
-# the verification engine (agent-service) and the web app (nginx, which also
-# proxies /api). Only the web port is published. Secrets come from the env file
+# The whole product in containers: Postgres, Redis, Qdrant, the API, the BullMQ
+# worker, the verification engine (agent-service) and the web app (nginx, which
+# also proxies /api). Only the web port is published. Secrets come from the env file
 # written by scripts/stack/stack.mjs (`npm run stack:up`, `npm run e2e`).
 #
 # compose.yaml is separate: local-development infrastructure only.
@@ -47,6 +47,17 @@ services:
       timeout: 3s
       retries: 30
 
+  qdrant:
+    image: qdrant/qdrant:v1.19.0
+    volumes:
+      - qdrantdata:/qdrant/storage
+    healthcheck:
+      # The image has no curl or wget; bash's /dev/tcp checks the HTTP port is open
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333 && printf 'GET /readyz HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
   agent-service:
     build:
       context: .
@@ -54,9 +65,13 @@ services:
     environment:
       ENVIRONMENT: production
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?run npm run stack:up}
+      # fake = deterministic agents, no API key; anthropic needs LLM_API_KEY
       LLM_PROVIDER: ${LLM_PROVIDER:-fake}
       LLM_API_KEY: ${LLM_API_KEY:-}
       MODEL_NAME: ${MODEL_NAME:-}
+      QDRANT_URL: http://qdrant:6333
+    depends_on:
+      qdrant: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
       interval: 3s
@@ -119,4 +134,5 @@ services:
 volumes:
   pgdata:
   redisdata:
+  qdrantdata:
   repos:

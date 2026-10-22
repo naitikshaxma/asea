@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from fastapi import APIRouter
 from app.schemas import HealthResponse, ReadinessResponse, DependencyCheckResult
 from app.config import settings
+from app.llm.provider import LLMError, create_provider
+from app.rag.index import get_index
 
 router = APIRouter(tags=["Health"])
 
@@ -22,18 +24,35 @@ def get_health() -> HealthResponse:
     )
 
 
-@router.get("/ready", response_model=ReadinessResponse)
-def get_readiness() -> ReadinessResponse:
-    start_check = time.time()
-    # In Phase 1 skeleton, LLM provider operates in local_mock mode without paid API key
-    llm_check = DependencyCheckResult(
+def _llm_check() -> DependencyCheckResult:
+    start = time.time()
+    try:
+        provider = create_provider(settings.LLM_PROVIDER, settings.LLM_API_KEY, settings.MODEL_NAME, settings.LLM_EFFORT)
+    except LLMError as exc:
+        return DependencyCheckResult(status="unconfigured", message=f"{exc}; the LLM agents are skipped")
+    note = " (deterministic stand-in, no model is called)" if provider.name == "fake" else ""
+    return DependencyCheckResult(
         status="up",
-        latencyMs=round((time.time() - start_check) * 1000, 2),
-        message=f"Model provider '{settings.LLM_PROVIDER}' initialized. Real agent execution planned for Phase 2.",
+        latencyMs=round((time.time() - start) * 1000, 2),
+        message=f"LLM provider '{provider.name}', model '{provider.model}'{note}",
     )
 
+
+def _index_check() -> DependencyCheckResult:
+    start = time.time()
+    try:
+        get_index(settings.QDRANT_URL, settings.QDRANT_API_KEY).client.get_collections()
+    except Exception as exc:  # report, don't fail readiness: only the architecture agent needs it
+        return DependencyCheckResult(status="down", message=f"Qdrant unreachable: {type(exc).__name__}")
+    where = settings.QDRANT_URL or "in-memory"
+    return DependencyCheckResult(status="up", latencyMs=round((time.time() - start) * 1000, 2), message=f"Qdrant ({where})")
+
+
+@router.get("/ready", response_model=ReadinessResponse)
+def get_readiness() -> ReadinessResponse:
     dependencies = {
-        "llm_provider": llm_check,
+        "llm_provider": _llm_check(),
+        "code_index": _index_check(),
     }
 
     return ReadinessResponse(

@@ -6,6 +6,9 @@ Each finding deducts severity_weight x category_multiplier x source_multiplier
 to 0-100, then lowered by every cap whose condition holds. The verdict is the
 first band (allow, review, high_risk, block) whose minimum the score reaches.
 
+If any agent did not complete, an "allow" verdict becomes "review": a
+verification that did not run every check is never allowed.
+
 The weights themselves come from the policy; the default policy's values are
 placeholders (see DEFAULT_POLICY_CONFIG in packages/contracts/src/policy.ts).
 """
@@ -14,7 +17,15 @@ import math
 from collections import Counter
 
 from app.verification.contract import Finding
-from app.verification.policy import CapApplied, PolicyConfig, ScoreBreakdownItem, ScoreResult, Verdict, policy_hash
+from app.verification.policy import (
+    CapApplied,
+    PolicyConfig,
+    ScoreBreakdownItem,
+    ScoreResult,
+    Verdict,
+    VerdictAdjustment,
+    policy_hash,
+)
 
 SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 VERDICT_ORDER: tuple[Verdict, ...] = ("allow", "review", "high_risk", "block")
@@ -32,7 +43,7 @@ def verdict_for(score: int, policy: PolicyConfig) -> Verdict:
     return "block"  # unreachable: verdict_bands.block is validated to be 0
 
 
-def score_findings(findings: list[Finding], policy: PolicyConfig) -> ScoreResult:
+def score_findings(findings: list[Finding], policy: PolicyConfig, incomplete_agents: list[str] | None = None) -> ScoreResult:
     breakdown = []
     for finding in findings:
         weight = getattr(policy.severity_weights, finding.severity)
@@ -78,12 +89,25 @@ def score_findings(findings: list[Finding], policy: PolicyConfig) -> ScoreResult
             )
         )
 
+    verdict = verdict_for(score, policy)
+    adjustments = []
+    if incomplete_agents and verdict == "allow":
+        adjustments.append(
+            VerdictAdjustment(
+                reason=f"Not every agent completed ({', '.join(sorted(incomplete_agents))}); an incomplete verification is not allowed",
+                from_verdict="allow",
+                to_verdict="review",
+            )
+        )
+        verdict = "review"
+
     return ScoreResult(
         score=score,
-        verdict=verdict_for(score, policy),
+        verdict=verdict,
         raw_score=raw_score,
         total_deduction=total,
         policy_hash=policy_hash(policy),
         breakdown=breakdown,
         caps_applied=caps_applied,
+        adjustments=adjustments,
     )

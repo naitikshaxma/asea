@@ -1,6 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import {
+  AgentFinishedEventSchema,
+  AgentRunSchema,
+  AgentStartedEventSchema,
+  ErrorEventSchema,
+  IndexRequestSchema,
+  IndexResponseSchema,
+  IndexStatusSchema,
+  PipelineRequestSchema,
+  PipelineResultSchema,
+  ReportSchema,
+  ResultEventSchema,
   ChangedFileSchema,
   DEFAULT_POLICY_CONFIG,
   FindingSchema,
@@ -32,6 +43,17 @@ describe('ASEA verification contract (Zod side)', () => {
       PolicyConfig: toJson(PolicyConfigSchema),
       ScoreRequest: toJson(ScoreRequestSchema),
       ScoreResult: toJson(ScoreResultSchema),
+      PipelineRequest: toJson(PipelineRequestSchema),
+      PipelineResult: toJson(PipelineResultSchema),
+      AgentRun: toJson(AgentRunSchema),
+      Report: toJson(ReportSchema),
+      AgentStartedEvent: toJson(AgentStartedEventSchema),
+      AgentFinishedEvent: toJson(AgentFinishedEventSchema),
+      ResultEvent: toJson(ResultEventSchema),
+      ErrorEvent: toJson(ErrorEventSchema),
+      IndexRequest: toJson(IndexRequestSchema),
+      IndexResponse: toJson(IndexResponseSchema),
+      IndexStatus: toJson(IndexStatusSchema),
     };
 
     await expect(`${JSON.stringify(schemas, null, 2)}\n`).toMatchFileSnapshot(SCHEMA_FILE);

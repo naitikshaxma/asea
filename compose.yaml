@@ -36,8 +36,27 @@ services:
       start_period: 3s
     restart: unless-stopped
 
+  # Repository index for the architecture agent (set QDRANT_URL=http://localhost:6333
+  # for the agent service; without it the service uses an in-memory index)
+  qdrant:
+    image: qdrant/qdrant:v1.19.0
+    container_name: ae-qdrant-dev
+    ports:
+      - "127.0.0.1:${QDRANT_PORT:-6333}:6333"
+    volumes:
+      - qdrant_dev_data:/qdrant/storage
+    healthcheck:
+      # The image has no curl or wget; bash's /dev/tcp checks the HTTP port is open
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333 && printf 'GET /readyz HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
 volumes:
   postgres_dev_data:
     name: ae_postgres_dev_data
   redis_dev_data:
     name: ae_redis_dev_data
+  qdrant_dev_data:
+    name: ae_qdrant_dev_data

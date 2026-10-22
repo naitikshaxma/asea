@@ -40,4 +40,4 @@ def verify_static(body: VerificationRequest, request: Request):
 @router.post("/score", response_model=ScoreResult)
 def verify_score(body: ScoreRequest):
     """Deterministic score, verdict and per-finding breakdown for findings under a policy."""
-    return score_findings(body.findings, body.policy)
+    return score_findings(body.findings, body.policy, body.incomplete_agents)

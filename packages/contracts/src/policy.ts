@@ -91,6 +91,8 @@ export type Verdict = z.infer<typeof VerdictEnum>;
 export const ScoreRequestSchema = z.object({
   findings: z.array(FindingSchema),
   policy: PolicyConfigSchema,
+  // Agents that did not complete; an incomplete verification is never allowed
+  incomplete_agents: z.array(z.string()).default([]),
 });
 export type ScoreRequest = z.infer<typeof ScoreRequestSchema>;
 
@@ -121,6 +123,13 @@ export const CapAppliedSchema = z.object({
 });
 export type CapApplied = z.infer<typeof CapAppliedSchema>;
 
+export const VerdictAdjustmentSchema = z.object({
+  reason: z.string(),
+  from_verdict: VerdictEnum,
+  to_verdict: VerdictEnum,
+});
+export type VerdictAdjustment = z.infer<typeof VerdictAdjustmentSchema>;
+
 export const ScoreResultSchema = z.object({
   score: z.number().int().min(0).max(100),
   verdict: VerdictEnum,
@@ -132,5 +141,7 @@ export const ScoreResultSchema = z.object({
   // Largest deduction first
   breakdown: z.array(ScoreBreakdownItemSchema),
   caps_applied: z.array(CapAppliedSchema),
+  // Verdict changes made after the bands, e.g. allow -> review when agents did not complete
+  adjustments: z.array(VerdictAdjustmentSchema).default([]),
 });
 export type ScoreResult = z.infer<typeof ScoreResultSchema>;
