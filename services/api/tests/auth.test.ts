@@ -3,6 +3,7 @@ import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { prisma } from '../src/services/prisma.js';
 import { hashPassword, verifyPassword, generateToken } from '../src/services/authService.js';
+import { config } from '../src/config.js';
 
 describe('Authentication & Authorization Endpoints', () => {
   const app = createApp();
@@ -208,5 +209,25 @@ describe('Authentication & Authorization Endpoints', () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.headers['set-cookie']).toBeDefined();
+  });
+
+  it('marks the session cookie Secure by NODE_ENV unless COOKIE_SECURE overrides it', async () => {
+    const original = { env: config.NODE_ENV, secure: config.COOKIE_SECURE };
+    const logoutCookie = async () => (await request(app).post('/api/v1/auth/logout')).headers['set-cookie'][0] as string;
+    try {
+      config.NODE_ENV = 'production';
+      config.COOKIE_SECURE = undefined;
+      expect(await logoutCookie()).toMatch(/; Secure/);
+
+      config.COOKIE_SECURE = 'false'; // production build served over plain HTTP
+      expect(await logoutCookie()).not.toMatch(/; Secure/);
+
+      config.NODE_ENV = 'development';
+      config.COOKIE_SECURE = 'true';
+      expect(await logoutCookie()).toMatch(/; Secure/);
+    } finally {
+      config.NODE_ENV = original.env;
+      config.COOKIE_SECURE = original.secure;
+    }
   });
 });

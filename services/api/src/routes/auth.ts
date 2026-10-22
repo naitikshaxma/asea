@@ -10,6 +10,11 @@ import { config } from '../config.js';
 
 export const authRouter = Router();
 
+// COOKIE_SECURE overrides the default (secure only in production)
+function cookieSecure(): boolean {
+  return config.COOKIE_SECURE ? config.COOKIE_SECURE === 'true' : config.NODE_ENV === 'production';
+}
+
 authRouter.post('/register', async (req, res, next) => {
   try {
     const validated = RegisterRequestSchema.parse(req.body);
@@ -18,7 +23,7 @@ authRouter.post('/register', async (req, res, next) => {
     // Set secure HttpOnly session cookie
     res.cookie(config.COOKIE_NAME, token, {
       httpOnly: true,
-      secure: config.NODE_ENV === 'production',
+      secure: cookieSecure(),
       sameSite: 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
@@ -37,7 +42,7 @@ authRouter.post('/login', async (req, res, next) => {
 
     res.cookie(config.COOKIE_NAME, token, {
       httpOnly: true,
-      secure: config.NODE_ENV === 'production',
+      secure: cookieSecure(),
       sameSite: 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
@@ -51,7 +56,7 @@ authRouter.post('/login', async (req, res, next) => {
 authRouter.post('/logout', (_req, res) => {
   res.clearCookie(config.COOKIE_NAME, {
     httpOnly: true,
-    secure: config.NODE_ENV === 'production',
+    secure: cookieSecure(),
     sameSite: 'lax',
   });
   res.status(200).json({ success: true, message: 'Logged out successfully' });

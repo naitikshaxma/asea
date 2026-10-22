@@ -89,3 +89,27 @@ export async function buildVerificationRequest(input: {
   }
   return request;
 }
+
+export interface GitBranch {
+  name: string;
+  sha: string;
+  subject: string;
+  committedAt: string;
+}
+
+/** Local branches of a repository, most recently committed first. */
+export async function listBranches(repoPath: string): Promise<GitBranch[]> {
+  const out = await git(repoPath, [
+    'for-each-ref',
+    '--sort=-committerdate',
+    '--format=%(refname:short)%00%(objectname)%00%(committerdate:iso-strict)%00%(subject)',
+    'refs/heads',
+  ]);
+  return out
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const [name = '', sha = '', committedAt = '', subject = ''] = line.split('\0');
+      return { name, sha, subject, committedAt: new Date(committedAt).toISOString() };
+    });
+}

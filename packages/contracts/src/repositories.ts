@@ -44,3 +44,19 @@ export const RepositoryListResponseSchema = z.object({
 });
 
 export type RepositoryListResponse = z.infer<typeof RepositoryListResponseSchema>;
+
+// GET .../repositories/:id/refs: local branches to pick a change (base..head) from
+export const RepositoryRefsResponseSchema = z.object({
+  repositoryId: z.string(),
+  defaultBranch: z.string(),
+  branches: z.array(
+    z.object({
+      name: z.string(),
+      sha: z.string(),
+      subject: z.string(),
+      committedAt: IsoTimestampSchema,
+    })
+  ),
+});
+
+export type RepositoryRefsResponse = z.infer<typeof RepositoryRefsResponseSchema>;

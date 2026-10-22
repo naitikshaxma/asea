@@ -1,8 +1,10 @@
 import { Router } from 'express';
-import { CreateRepositoryRequestSchema } from '@autonomous-engineer/contracts';
+import { CreateRepositoryRequestSchema, type RepositoryRefsResponse } from '@autonomous-engineer/contracts';
 import { requireAuth, requireWorkspaceMembership } from '../middlewares/authMiddleware.js';
 import { prisma } from '../services/prisma.js';
 import { AppError } from '../middlewares/errorHandler.js';
+import { resolveRepositoryFsPath } from '../services/intelligence/repositoryAnalysisService.js';
+import { listBranches, VerificationInputError } from '../services/verification/gitDiff.js';
 
 export const repositoriesRouter = Router({ mergeParams: true });
 
@@ -102,6 +104,34 @@ repositoriesRouter.get(
         createdAt: repo.createdAt.toISOString(),
         updatedAt: repo.updatedAt.toISOString(),
       });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+repositoriesRouter.get(
+  '/workspaces/:workspaceId/repositories/:repositoryId/refs',
+  requireWorkspaceMembership('MEMBER'),
+  async (req, res, next) => {
+    try {
+      const { workspaceId, repositoryId } = req.params;
+      const repo = await prisma.repository.findFirst({ where: { id: repositoryId, workspaceId } });
+      if (!repo) {
+        return next(new AppError(404, 'NOT_FOUND', 'Repository record not found'));
+      }
+      const repoPath = resolveRepositoryFsPath(repo.repositoryUrl);
+      let branches;
+      try {
+        branches = await listBranches(repoPath);
+      } catch (err) {
+        if (err instanceof VerificationInputError) {
+          throw new AppError(400, 'BAD_REQUEST', `Repository is not a readable git repository: ${err.message}`);
+        }
+        throw err;
+      }
+      const body: RepositoryRefsResponse = { repositoryId: repo.id, defaultBranch: repo.defaultBranch, branches };
+      res.status(200).json(body);
     } catch (err) {
       next(err);
     }

@@ -24,6 +24,9 @@ export const EnvSchema = z
     JWT_EXPIRES_IN: z.string().default('7d'),
     COOKIE_NAME: z.string().default('ae_auth_token'),
     COOKIE_SECRET: z.string().default('dev-cookie-secret-phase2'),
+    // Secure flag on the session cookie; defaults to true only in production.
+    // Set false when serving production builds over plain HTTP (local stack).
+    COOKIE_SECURE: z.enum(['true', 'false']).optional(),
 
     // AI Service integration
     AI_SERVICE_URL: z.string().url().default('http://localhost:8000'),

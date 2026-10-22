@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { VerificationRequestSchema } from '@autonomous-engineer/contracts';
-import { VerificationInputError, buildVerificationRequest } from '../../src/services/verification/gitDiff.js';
+import { VerificationInputError, buildVerificationRequest, listBranches } from '../../src/services/verification/gitDiff.js';
 
 // A real git repository in a temp dir: base commit, then a head commit that
 // modifies, adds, deletes and adds a binary file. Each test spawns many git
@@ -116,6 +116,24 @@ describe('buildVerificationRequest (git)', { timeout: GIT_TEST_TIMEOUT_MS }, () 
       fs.rmSync(path.join(dir, '.git/info/attributes'), { force: true });
       fs.rmSync(`${marker}-external`, { force: true });
       fs.rmSync(`${marker}-textconv`, { force: true });
+    }
+  });
+
+  // Both commits may share a timestamp here, so only membership is checked, not the order
+  it('lists local branches with their commit and subject', async () => {
+    const current = git('rev-parse', '--abbrev-ref', 'HEAD');
+    git('branch', 'feature/older', base);
+    try {
+      const branches = await listBranches(dir);
+      expect(branches.map((b) => [b.name, b.sha, b.subject]).sort()).toEqual(
+        [
+          [current, head, 'head'],
+          ['feature/older', base, 'base'],
+        ].sort()
+      );
+      expect(new Date(branches[0]!.committedAt).toISOString()).toBe(branches[0]!.committedAt);
+    } finally {
+      git('branch', '-D', 'feature/older');
     }
   });
 });
