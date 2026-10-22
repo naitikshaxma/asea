@@ -66,10 +66,46 @@ export const ScoreBreakdownResponseSchema = z.object({
 });
 export type ScoreBreakdownResponse = z.infer<typeof ScoreBreakdownResponseSchema>;
 
+// One pipeline agent's progress; "running" only while the run executes
+export const AgentTimelineEntrySchema = z.object({
+  name: z.enum(['ingest', 'static', 'negative_space', 'architecture', 'score', 'report']),
+  status: z.enum(['running', 'completed', 'failed', 'skipped']),
+  startedAt: z.string(),
+  finishedAt: z.string().nullable(),
+  durationMs: z.number().int().nullable(),
+  attempts: z.number().int(),
+  findingCount: z.number().int(),
+  detail: z.string().nullable(),
+  error: z.string().nullable(),
+});
+export type AgentTimelineEntry = z.infer<typeof AgentTimelineEntrySchema>;
+
+// The reporter's text; it explains findings and never adds any
+export const RunReportSchema = z.object({
+  summary: z.string(),
+  generatedBy: z.enum(['llm', 'fallback']),
+  explanations: z.array(z.object({ findingId: z.string(), explanation: z.string(), suggestedFix: z.string() })),
+});
+export type RunReport = z.infer<typeof RunReportSchema>;
+
+export const EngineInfoSchema = z.object({
+  llmProvider: z.string(),
+  llmModel: z.string(),
+  // False when the negative-space or architecture agent did not complete
+  complete: z.boolean(),
+  toolsRun: z.array(z.string()),
+  toolsUnavailable: z.array(z.string()),
+  semgrepRulesetSha256: z.string().nullable(),
+});
+export type EngineInfo = z.infer<typeof EngineInfoSchema>;
+
 export const VerificationRunDetailResponseSchema = VerificationRunResponseSchema.extend({
   // null until the run has been scored
   scoreBreakdown: ScoreBreakdownResponseSchema.nullable(),
   policySnapshot: PolicyConfigSchema.nullable(),
+  agentTimeline: z.array(AgentTimelineEntrySchema),
+  report: RunReportSchema.nullable(),
+  engine: EngineInfoSchema.nullable(),
 });
 export type VerificationRunDetailResponse = z.infer<typeof VerificationRunDetailResponseSchema>;
 
@@ -125,5 +161,7 @@ export const AuditChainVerificationResponseSchema = z.object({
   // Whether the stored score, verdict and breakdown match the SCORE_COMPUTED
   // event; null until the run has been scored
   scoreValid: z.boolean().nullable(),
+  // Whether the stored report matches the REPORT_GENERATED event; null until then
+  reportValid: z.boolean().nullable(),
 });
 export type AuditChainVerificationResponse = z.infer<typeof AuditChainVerificationResponseSchema>;

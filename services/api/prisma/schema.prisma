@@ -111,6 +111,8 @@ enum WorkflowStepType {
   VERIFY_BOUNDARIES
   SIMULATE_EXECUTION
   STATIC_ANALYSIS
+  INDEX_REPOSITORY
+  VERIFICATION_PIPELINE
 }
 
 enum WorkflowStepStatus {
@@ -412,6 +414,13 @@ model VerificationRun {
   policyProfileId String?
   policyHash      String?
   policySnapshot  Json?
+  // Pipeline progress, updated live while the run executes: one entry per
+  // agent (ingest, static, negative_space, architecture, score, report)
+  agentTimeline Json?
+  // The reporter's summary and per-finding explanations
+  report        Json?
+  // LLM provider/model, static tools and whether every agent completed
+  engineInfo    Json?
   startedAt    DateTime?
   completedAt  DateTime?
   // Seal set when the run reaches a terminal state: the audit chain's head

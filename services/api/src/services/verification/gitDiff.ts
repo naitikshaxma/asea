@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { AuthorType, VerificationRequest } from '@autonomous-engineer/contracts';
 
@@ -36,7 +36,8 @@ async function git(repoPath: string, args: string[]): Promise<string> {
   }
 }
 
-async function resolveCommit(repoPath: string, sha: string): Promise<string> {
+/** The full SHA of a commit given by a 7-40 character hex prefix. */
+export async function resolveCommit(repoPath: string, sha: string): Promise<string> {
   if (!SHA_PATTERN.test(sha)) {
     throw new VerificationInputError(`'${sha}' is not a 7-40 character hex commit SHA`);
   }
@@ -112,4 +113,101 @@ export async function listBranches(repoPath: string): Promise<GitBranch[]> {
       const [name = '', sha = '', committedAt = '', subject = ''] = line.split('\0');
       return { name, sha, subject, committedAt: new Date(committedAt).toISOString() };
     });
+}
+
+export interface TreeFile {
+  path: string;
+  content: string;
+}
+
+/**
+ * Text files of one commit whose names end with one of `extensions`, read with
+ * a single `git cat-file --batch` process. Files are taken in path order until
+ * `maxFiles` or `maxBytes` is reached (then `truncated` is true); files over
+ * 1 MiB and binary files are skipped.
+ */
+export async function readTreeFiles(
+  repoPath: string,
+  sha: string,
+  limits: { extensions: string[]; maxFiles: number; maxBytes: number }
+): Promise<{ commitSha: string; files: TreeFile[]; truncated: boolean }> {
+  const commitSha = await resolveCommit(repoPath, sha);
+  const listing = await git(repoPath, ['ls-tree', '-r', '-z', '--long', commitSha]);
+  const candidates = listing
+    .split('\0')
+    .filter(Boolean)
+    .map((entry) => {
+      // "<mode> <type> <object> <size>\t<path>"
+      const tab = entry.indexOf('\t');
+      const [, type = '', object = '', size = ''] = entry.slice(0, tab).trim().split(/\s+/);
+      return { type, object, size: Number(size), path: entry.slice(tab + 1) };
+    })
+    .filter((e) => e.type === 'blob' && e.size <= 1024 * 1024 && limits.extensions.some((ext) => e.path.endsWith(ext)))
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+
+  const selected: typeof candidates = [];
+  let total = 0;
+  for (const entry of candidates) {
+    if (selected.length >= limits.maxFiles || total + entry.size > limits.maxBytes) break;
+    selected.push(entry);
+    total += entry.size;
+  }
+  const contents = await catFileBatch(repoPath, selected.map((e) => e.object));
+  const files = selected
+    .map((e, i) => ({ path: e.path, content: contents[i] ?? '' }))
+    .filter((f) => !f.content.includes('\0'));
+  return { commitSha, files, truncated: selected.length < candidates.length };
+}
+
+/** Contents of the given blob ids, in order, from one `git cat-file --batch`. */
+function catFileBatch(repoPath: string, objects: string[]): Promise<string[]> {
+  if (objects.length === 0) return Promise.resolve([]);
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', [...SAFE_GIT_CONFIG, '-C', repoPath, 'cat-file', '--batch'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    const chunks: Buffer[] = [];
+    let received = 0;
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new VerificationInputError(`git cat-file timed out in ${repoPath}`));
+    }, GIT_TIMEOUT_MS);
+    child.stdout.on('data', (chunk: Buffer) => {
+      received += chunk.length;
+      if (received > GIT_MAX_BUFFER) {
+        child.kill();
+        reject(new VerificationInputError(`git cat-file output exceeded ${GIT_MAX_BUFFER} bytes`));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(new VerificationInputError(`git cat-file failed in ${repoPath}: ${err.message}`));
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(new VerificationInputError(`git cat-file exited with ${code} in ${repoPath}`));
+        return;
+      }
+      const out = Buffer.concat(chunks);
+      const contents: string[] = [];
+      let offset = 0;
+      for (let i = 0; i < objects.length; i++) {
+        const newline = out.indexOf(0x0a, offset);
+        const header = out.subarray(offset, newline).toString('utf8').split(' ');
+        const size = Number(header[2]);
+        if (header[1] !== 'blob' || !Number.isFinite(size)) {
+          reject(new VerificationInputError(`git cat-file returned an unexpected header: ${header.join(' ')}`));
+          return;
+        }
+        contents.push(out.subarray(newline + 1, newline + 1 + size).toString('utf8'));
+        offset = newline + 1 + size + 1; // content is followed by a newline
+      }
+      resolve(contents);
+    });
+    child.stdin.end(objects.join('\n') + '\n');
+  });
 }

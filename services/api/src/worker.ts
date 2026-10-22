@@ -190,27 +190,44 @@ export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
 
     let lastStep: string;
     if (task.taskType === 'VERIFICATION') {
-      // Step 2: ASEA static analysis; the placeholder steps don't apply
-      const stepStartedAt = new Date();
-      const resultMetadata = await runVerificationStep({
-        taskId,
-        workspaceId,
-        actorId: task.creatorId,
-        attemptNumber,
-        isFinalAttempt: attempt >= maxAttempts,
-      });
-      await prisma.workflowStep.create({
-        data: {
-          workflowRunId: runId,
-          stepType: 'STATIC_ANALYSIS',
-          stepStatus: 'COMPLETED',
-          stepOrder: 2,
-          startedAt: stepStartedAt,
-          finishedAt: new Date(),
-          resultMetadata,
-        },
-      });
-      lastStep = 'STATIC_ANALYSIS';
+      // Steps 2-3: index the repository, then the engine's agent pipeline; the
+      // placeholder steps don't apply. Each step is RUNNING while it executes
+      // and is marked FAILED if the verification throws during it.
+      let stepOrder = 1;
+      let current: { id: string } | null = null;
+      try {
+        await runVerificationStep({
+          taskId,
+          workspaceId,
+          actorId: task.creatorId,
+          attemptNumber,
+          isFinalAttempt: attempt >= maxAttempts,
+          hooks: {
+            started: async (stepType) => {
+              current = await prisma.workflowStep.create({
+                data: { workflowRunId: runId, stepType, stepStatus: 'RUNNING', stepOrder: ++stepOrder, startedAt: new Date() },
+              });
+            },
+            finished: async (_stepType, resultMetadata) => {
+              await prisma.workflowStep.update({
+                where: { id: current!.id },
+                data: { stepStatus: 'COMPLETED', finishedAt: new Date(), resultMetadata },
+              });
+              current = null;
+            },
+          },
+        });
+      } catch (err) {
+        const failed = current as { id: string } | null;
+        if (failed) {
+          await prisma.workflowStep.update({
+            where: { id: failed.id },
+            data: { stepStatus: 'FAILED', finishedAt: new Date(), failureSummary: err instanceof Error ? err.message : String(err) },
+          });
+        }
+        throw err;
+      }
+      lastStep = 'VERIFICATION_PIPELINE';
     } else {
       // Step 2: Repository Inspection & Intelligence
       let repoInspectionMeta: Record<string, unknown> = {

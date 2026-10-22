@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { VerificationRequestSchema } from '@autonomous-engineer/contracts';
-import { VerificationInputError, buildVerificationRequest, listBranches } from '../../src/services/verification/gitDiff.js';
+import { VerificationInputError, buildVerificationRequest, listBranches, readTreeFiles } from '../../src/services/verification/gitDiff.js';
 
 // A real git repository in a temp dir: base commit, then a head commit that
 // modifies, adds, deletes and adds a binary file. Each test spawns many git
@@ -135,5 +135,25 @@ describe('buildVerificationRequest (git)', { timeout: GIT_TEST_TIMEOUT_MS }, () 
     } finally {
       git('branch', '-D', 'feature/older');
     }
+  });
+
+  it('reads the files of a commit with one cat-file process, filtered and limited', async () => {
+    // head has app/new.py and app/service.py (and a binary and a markdown file that are skipped)
+    const all = await readTreeFiles(dir, head.slice(0, 10), { extensions: ['.py'], maxFiles: 100, maxBytes: 1_000_000 });
+    expect(all.commitSha).toBe(head);
+    expect(all.truncated).toBe(false);
+    expect(all.files).toEqual([
+      { path: 'app/new.py', content: 'VALUE = 1\n' },
+      { path: 'app/service.py', content: 'def greet(name):\n    return f"hi {name}"\n' },
+    ]);
+
+    const atBase = await readTreeFiles(dir, base, { extensions: ['.py', '.md'], maxFiles: 100, maxBytes: 1_000_000 });
+    expect(atBase.files.map((f) => f.path)).toEqual(['app/service.py', 'docs/old.md']);
+
+    const limited = await readTreeFiles(dir, head, { extensions: ['.py'], maxFiles: 1, maxBytes: 1_000_000 });
+    expect(limited).toMatchObject({ truncated: true, files: [{ path: 'app/new.py' }] });
+    expect((await readTreeFiles(dir, head, { extensions: ['.py'], maxFiles: 100, maxBytes: 12 })).files.map((f) => f.path)).toEqual(['app/new.py']);
+    expect((await readTreeFiles(dir, head, { extensions: ['.bin'], maxFiles: 100, maxBytes: 1_000_000 })).files).toEqual([]);
+    await expect(readTreeFiles(dir, 'HEAD', { extensions: ['.py'], maxFiles: 1, maxBytes: 1 })).rejects.toThrow(VerificationInputError);
   });
 });

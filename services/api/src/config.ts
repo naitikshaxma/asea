@@ -35,6 +35,11 @@ export const EnvSchema = z
     AI_SERVICE_TIMEOUT_MS: z.coerce.number().int().positive().default(180000),
     // Must not exceed the agent service's AGENT_MAX_REQUEST_BYTES
     VERIFICATION_MAX_REQUEST_BYTES: z.coerce.number().int().positive().default(5242880),
+    // Repository index sent to the engine for the architecture agent (Python files at the base commit)
+    INDEX_MAX_FILES: z.coerce.number().int().positive().default(5000),
+    INDEX_MAX_BYTES: z.coerce.number().int().positive().default(20 * 1024 * 1024),
+    // Per index request; must not exceed the agent service's AGENT_MAX_REQUEST_BYTES
+    INDEX_BATCH_BYTES: z.coerce.number().int().positive().default(2 * 1024 * 1024),
 
     // PostgreSQL Configuration
     DATABASE_URL: z.string().optional(),

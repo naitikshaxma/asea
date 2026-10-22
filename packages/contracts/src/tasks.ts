@@ -56,6 +56,9 @@ export const WorkflowStepTypeEnum = z.enum([
   'GENERATE_SPEC',
   'VERIFY_BOUNDARIES',
   'SIMULATE_EXECUTION',
+  'STATIC_ANALYSIS',
+  'INDEX_REPOSITORY',
+  'VERIFICATION_PIPELINE',
 ]);
 
 export type WorkflowStepType = z.infer<typeof WorkflowStepTypeEnum>;

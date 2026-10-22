@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import type { FindingSeverity, VerificationRun } from '@prisma/client';
 import {
+  AgentTimelineEntrySchema,
+  EngineInfoSchema,
   PolicyConfigSchema,
+  RunReportSchema,
   ScoreResultSchema,
   type AuditChainVerificationResponse,
   type ScoreBreakdownResponse,
@@ -17,6 +20,7 @@ import { verifyAuditChain } from '../services/auditChain.js';
 import {
   VERIFICATION_RESOURCE_TYPE,
   findingsDigest,
+  reportDigest,
   scoreDigest,
   toVerdictEnum,
 } from '../services/verification/verificationService.js';
@@ -125,6 +129,9 @@ verificationRouter.get(
         ...formatRun(run),
         scoreBreakdown: formatScoreBreakdown(run.scoreBreakdown),
         policySnapshot: run.policySnapshot === null ? null : PolicyConfigSchema.parse(run.policySnapshot),
+        agentTimeline: run.agentTimeline === null ? [] : AgentTimelineEntrySchema.array().parse(run.agentTimeline),
+        report: run.report === null ? null : RunReportSchema.parse(run.report),
+        engine: run.engineInfo === null ? null : EngineInfoSchema.parse(run.engineInfo),
       };
       res.status(200).json(body);
     } catch (err) {
@@ -196,9 +203,8 @@ function verifyStoredScore(
 
 /**
  * Checks the run's audit hash chain, its seal (terminal runs: detects removed
- * trailing events and edited head/count), once static analysis has completed
- * that the stored findings still match the digest in the chain, and once the
- * run is scored that the stored score matches SCORE_COMPUTED.
+ * trailing events and edited head/count), and once recorded, that the stored
+ * findings, score and report still match the digests in the chain.
  */
 verificationRouter.get(
   '/workspaces/:workspaceId/verification-runs/:runId/audit/verify',
@@ -212,7 +218,12 @@ verificationRouter.get(
       });
       const chain = verifyAuditChain(events);
 
-      const completed = events.find((e) => e.eventType === 'STATIC_ANALYSIS_COMPLETED');
+      // FINDINGS_RECORDED holds the digest; runs from before the agent pipeline kept it on STATIC_ANALYSIS_COMPLETED
+      const completed = events.find(
+        (e) =>
+          (e.eventType === 'FINDINGS_RECORDED' || e.eventType === 'STATIC_ANALYSIS_COMPLETED') &&
+          (e.metadata as { findingsDigest?: unknown } | null)?.findingsDigest !== undefined
+      );
       const recordedDigest = (completed?.metadata as { findingsDigest?: unknown } | null)?.findingsDigest;
       let findingsDigestValid: boolean | null = null;
       if (completed) {
@@ -225,10 +236,15 @@ verificationRouter.get(
         run,
         events.find((e) => e.eventType === 'SCORE_COMPUTED')
       );
+      const reported = events.find((e) => e.eventType === 'REPORT_GENERATED');
+      const reportValid = reported
+        ? run.report !== null && (reported.metadata as { reportDigest?: unknown } | null)?.reportDigest === reportDigest(run.report)
+        : null;
 
       const body: AuditChainVerificationResponse = {
         verificationRunId: run.id,
-        valid: chain.valid && seal.valid !== false && findingsDigestValid !== false && scoreValid !== false,
+        valid:
+          chain.valid && seal.valid !== false && findingsDigestValid !== false && scoreValid !== false && reportValid !== false,
         length: chain.length,
         headHash: chain.valid ? chain.headHash : undefined,
         chain: chain.valid
@@ -237,6 +253,7 @@ verificationRouter.get(
         seal,
         findingsDigestValid,
         scoreValid,
+        reportValid,
       };
       res.status(200).json(body);
     } catch (err) {

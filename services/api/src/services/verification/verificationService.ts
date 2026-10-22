@@ -2,17 +2,22 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Prisma, PrismaClient, VerificationFinding, VerificationRun } from '@prisma/client';
 import {
   PolicyConfigSchema,
+  type AgentRun,
+  type AgentTimelineEntry,
   type AuthorType,
+  type EngineInfo,
   type Finding,
+  type IndexResponse,
+  type Report,
+  type RunReport,
   type ScoreResult,
-  type StaticAnalysisResult,
 } from '@autonomous-engineer/contracts';
 import { prisma } from '../prisma.js';
 import { config } from '../../config.js';
 import { canonicalJson, chainAuditEvent, verifyAuditChain } from '../auditChain.js';
 import { resolveRepositoryFsPath } from '../intelligence/repositoryAnalysisService.js';
-import { buildVerificationRequest } from './gitDiff.js';
-import { requestScore, requestStaticAnalysis } from './agentClient.js';
+import { buildVerificationRequest, readTreeFiles, resolveCommit, type TreeFile } from './gitDiff.js';
+import { getIndexStatus, indexFiles, runPipeline } from './agentClient.js';
 import { RUN_SEALED } from './runSeal.js';
 import { ensureDefaultPolicy, policyConfigHash, toResolvedPolicy, type ResolvedPolicy } from '../policy/policyService.js';
 
@@ -178,24 +183,94 @@ function toFindingRow(verificationRunId: string, f: Finding): FindingRow {
   };
 }
 
-function summarize(result: StaticAnalysisResult) {
-  const findingsBySeverity: Record<string, number> = {};
-  for (const f of result.findings) findingsBySeverity[f.severity] = (findingsBySeverity[f.severity] ?? 0) + 1;
+/** sha256 over the stored report, recorded in REPORT_GENERATED so edits to it are detectable. */
+export function reportDigest(report: unknown): string {
+  return createHash('sha256').update(canonicalJson(report), 'utf8').digest('hex');
+}
+
+function toTimelineEntry(run: AgentRun): AgentTimelineEntry {
   return {
-    findingCount: result.findings.length,
-    findingsBySeverity,
-    toolsRun: result.tools_run,
-    toolsUnavailable: result.tools_unavailable,
-    durationMs: result.duration_ms,
-    semgrepRulesetSha256: result.semgrep_ruleset_sha256,
+    name: run.name,
+    status: run.status,
+    startedAt: run.started_at,
+    finishedAt: run.finished_at,
+    durationMs: run.duration_ms,
+    attempts: run.attempts,
+    findingCount: run.finding_count,
+    detail: run.detail,
+    error: run.error,
   };
 }
 
+function toRunReport(report: Report): RunReport {
+  return {
+    summary: report.summary,
+    generatedBy: report.generated_by,
+    explanations: report.explanations.map((e) => ({
+      findingId: e.finding_id,
+      explanation: e.explanation,
+      suggestedFix: e.suggested_fix,
+    })),
+  };
+}
+
+function countBySeverity(findings: Finding[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const f of findings) counts[f.severity] = (counts[f.severity] ?? 0) + 1;
+  return counts;
+}
+
+const asJson = (value: unknown) => value as Prisma.InputJsonValue;
+
 /**
- * The STATIC_ANALYSIS step of a VERIFICATION task: builds the request from the
- * repository's git history, calls the engine's static-analysis and scoring
- * nodes, and persists the findings, score, verdict and hash-chained audit
- * events.
+ * Makes sure the engine has indexed the repository at the base commit, which
+ * the architecture agent compares the change with. The engine caches the
+ * index by commit, so after the first run of a commit this is one status call.
+ * Files go in batches of at most INDEX_BATCH_BYTES; the last batch completes it.
+ */
+export async function ensureRepositoryIndexed(repositoryId: string, repoPath: string, baseSha: string) {
+  const commitSha = await resolveCommit(repoPath, baseSha);
+  const status = await getIndexStatus(repositoryId, commitSha);
+  if (status.indexed) {
+    return { commitSha, cached: true, symbols: status.symbols, files: 0, truncated: false };
+  }
+  const { files, truncated } = await readTreeFiles(repoPath, commitSha, {
+    extensions: ['.py'],
+    maxFiles: config.INDEX_MAX_FILES,
+    maxBytes: config.INDEX_MAX_BYTES,
+  });
+  const batches: TreeFile[][] = [[]];
+  let batchBytes = 0;
+  for (const file of files) {
+    const bytes = Buffer.byteLength(file.content, 'utf8') + Buffer.byteLength(file.path, 'utf8');
+    if (batchBytes + bytes > config.INDEX_BATCH_BYTES && batches[batches.length - 1]!.length > 0) {
+      batches.push([]);
+      batchBytes = 0;
+    }
+    batches[batches.length - 1]!.push(file);
+    batchBytes += bytes;
+  }
+  let last: IndexResponse | undefined;
+  for (const [i, batch] of batches.entries()) {
+    last = await indexFiles({ repository_id: repositoryId, commit_sha: commitSha, files: batch, complete: i === batches.length - 1 });
+  }
+  return { commitSha, cached: last!.cached, symbols: last!.symbols, files: files.length, truncated };
+}
+
+export type VerificationStepType = 'INDEX_REPOSITORY' | 'VERIFICATION_PIPELINE';
+
+/** The worker records each phase of a verification as a WorkflowStep. */
+export interface VerificationStepHooks {
+  started(step: VerificationStepType): Promise<void>;
+  finished(step: VerificationStepType, metadata: Prisma.InputJsonObject): Promise<void>;
+}
+
+/**
+ * Runs a VERIFICATION task's verification: indexes the repository at the base
+ * commit (INDEX_REPOSITORY), then builds the request from git and streams the
+ * engine's pipeline (VERIFICATION_PIPELINE), keeping the run's agent timeline
+ * up to date while it runs. Persists findings, score, verdict, report and the
+ * hash-chained audit events, then seals the run.
  */
 export async function runVerificationStep(args: {
   taskId: string;
@@ -203,7 +278,9 @@ export async function runVerificationStep(args: {
   actorId: string | null;
   attemptNumber: number;
   isFinalAttempt: boolean;
-}): Promise<Prisma.InputJsonObject> {
+  hooks: VerificationStepHooks;
+}): Promise<void> {
+  const { hooks } = args;
   const run = await prisma.verificationRun.findFirst({
     where: { taskId: args.taskId, workspaceId: args.workspaceId },
     orderBy: { createdAt: 'desc' },
@@ -214,12 +291,14 @@ export async function runVerificationStep(args: {
   if (run.status === 'COMPLETED') {
     // Results were already committed (e.g. a stalled job re-ran); don't analyse twice
     const findingCount = await prisma.verificationFinding.count({ where: { verificationRunId: run.id } });
-    return { verificationRunId: run.id, findingCount, alreadyCompleted: true };
+    await hooks.started('VERIFICATION_PIPELINE');
+    await hooks.finished('VERIFICATION_PIPELINE', { verificationRunId: run.id, findingCount, alreadyCompleted: true });
+    return;
   }
 
   await prisma.verificationRun.update({
     where: { id: run.id },
-    data: { status: 'RUNNING', startedAt: run.startedAt ?? new Date() },
+    data: { status: 'RUNNING', startedAt: run.startedAt ?? new Date(), agentTimeline: [] },
   });
   const policy = await policyForRun(run);
   await appendVerificationAuditEvent(
@@ -234,23 +313,51 @@ export async function runVerificationStep(args: {
     const repository = await prisma.repository.findFirstOrThrow({
       where: { id: run.repositoryId, workspaceId: args.workspaceId },
     });
+    const repoPath = resolveRepositoryFsPath(repository.repositoryUrl);
+
+    await hooks.started('INDEX_REPOSITORY');
+    const index = await ensureRepositoryIndexed(run.repositoryId, repoPath, run.baseSha);
+    await appendVerificationAuditEvent(prisma, run, 'REPOSITORY_INDEXED', { attemptNumber: args.attemptNumber, ...index }, args.actorId);
+    await hooks.finished('INDEX_REPOSITORY', { verificationRunId: run.id, ...index });
+
+    await hooks.started('VERIFICATION_PIPELINE');
     const request = await buildVerificationRequest({
       repositoryId: run.repositoryId,
-      repoPath: resolveRepositoryFsPath(repository.repositoryUrl),
+      repoPath,
       baseSha: run.baseSha,
       headSha: run.headSha,
       requirement: run.requirement,
       authorType: run.authorType.toLowerCase() as AuthorType,
       maxRequestBytes: config.VERIFICATION_MAX_REQUEST_BYTES,
     });
-    const result = await requestStaticAnalysis(request);
-    const score = await requestScore({ findings: result.findings, policy: policy.config });
+    const timeline: AgentTimelineEntry[] = [];
+    const result = await runPipeline({ request, policy: policy.config }, async (event) => {
+      const entry: AgentTimelineEntry =
+        event.type === 'agent_started'
+          ? { name: event.agent, status: 'running', startedAt: event.at, finishedAt: null, durationMs: null, attempts: 0, findingCount: 0, detail: null, error: null }
+          : toTimelineEntry(event.run);
+      const i = timeline.findIndex((e) => e.name === entry.name);
+      if (i >= 0) timeline[i] = entry;
+      else timeline.push(entry);
+      await prisma.verificationRun.update({ where: { id: run.id }, data: { agentTimeline: asJson(timeline) } });
+    });
+
+    const score = result.score;
     if (score.policy_hash !== policy.hash) {
       throw new Error(`Engine scored with policy ${score.policy_hash}, expected ${policy.hash}`);
     }
     const verdict = toVerdictEnum(score.verdict);
     const rows = result.findings.map((f) => toFindingRow(run.id, f));
-    const summary = { ...summarize(result), score: score.score, verdict };
+    const report = toRunReport(result.report);
+    const engineInfo: EngineInfo = {
+      llmProvider: result.llm.provider,
+      llmModel: result.llm.model,
+      complete: result.complete,
+      toolsRun: result.static.tools_run,
+      toolsUnavailable: result.static.tools_unavailable,
+      semgrepRulesetSha256: result.static.semgrep_ruleset_sha256,
+    };
+    const findingsBySeverity = countBySeverity(result.findings);
 
     await prisma.$transaction(async (tx) => {
       await tx.verificationFinding.createMany({ data: rows });
@@ -263,9 +370,33 @@ export async function runVerificationStep(args: {
           resolvedBaseSha: request.base_sha,
           resolvedHeadSha: request.head_sha,
           changedFiles: request.changed_files.length,
-          ...summary,
-          findingsDigest: findingsDigest(rows),
+          findingCount: result.static.finding_count,
+          toolsRun: result.static.tools_run,
+          toolsUnavailable: result.static.tools_unavailable,
+          durationMs: result.static.duration_ms,
+          semgrepRulesetSha256: result.static.semgrep_ruleset_sha256,
         },
+        args.actorId
+      );
+      await appendVerificationAuditEvent(
+        tx,
+        run,
+        'AGENTS_COMPLETED',
+        {
+          complete: result.complete,
+          llmProvider: result.llm.provider,
+          llmModel: result.llm.model,
+          agents: result.agents
+            .filter((a) => a.name === 'negative_space' || a.name === 'architecture' || a.name === 'report')
+            .map((a) => ({ name: a.name, status: a.status, attempts: a.attempts, findingCount: a.finding_count, error: a.error })),
+        },
+        args.actorId
+      );
+      await appendVerificationAuditEvent(
+        tx,
+        run,
+        'FINDINGS_RECORDED',
+        { findingCount: rows.length, findingsBySeverity, findingsDigest: findingsDigest(rows) },
         args.actorId
       );
       await appendVerificationAuditEvent(
@@ -283,6 +414,13 @@ export async function runVerificationStep(args: {
         },
         args.actorId
       );
+      await appendVerificationAuditEvent(
+        tx,
+        run,
+        'REPORT_GENERATED',
+        { generatedBy: report.generatedBy, reportDigest: reportDigest(report) },
+        args.actorId
+      );
       await finishVerificationRun(
         tx,
         run,
@@ -290,13 +428,31 @@ export async function runVerificationStep(args: {
           status: 'COMPLETED',
           eventType: 'VERIFICATION_COMPLETED',
           metadata: { findingCount: rows.length, score: score.score, verdict },
-          data: { score: score.score, verdict, scoreBreakdown: score },
+          data: {
+            score: score.score,
+            verdict,
+            scoreBreakdown: asJson(score),
+            report: asJson(report),
+            agentTimeline: asJson(result.agents.map(toTimelineEntry)),
+            engineInfo: asJson(engineInfo),
+          },
         },
         args.actorId
       );
     });
 
-    return { verificationRunId: run.id, ...summary };
+    await hooks.finished('VERIFICATION_PIPELINE', {
+      verificationRunId: run.id,
+      findingCount: rows.length,
+      findingsBySeverity,
+      score: score.score,
+      verdict,
+      complete: result.complete,
+      llmProvider: result.llm.provider,
+      toolsRun: result.static.tools_run,
+      toolsUnavailable: result.static.tools_unavailable,
+      semgrepRulesetSha256: result.static.semgrep_ruleset_sha256,
+    });
   } catch (err: unknown) {
     const error = err instanceof Error ? err.message : String(err);
     const metadata = { attemptNumber: args.attemptNumber, error };
