@@ -19,6 +19,7 @@ from app.verification.contract import (
     StaticAnalysisResult,
     VerificationRequest,
 )
+from app.verification.policy import PolicyConfig, ScoreRequest, ScoreResult
 
 ZOD_SCHEMA_FILE = (
     Path(__file__).resolve().parents[3] / "packages" / "contracts" / "schemas" / "asea-contract.schema.json"
@@ -29,6 +30,9 @@ MODELS = {
     "VerificationRequest": VerificationRequest,
     "Finding": Finding,
     "StaticAnalysisResult": StaticAnalysisResult,
+    "PolicyConfig": PolicyConfig,
+    "ScoreRequest": ScoreRequest,
+    "ScoreResult": ScoreResult,
 }
 
 CONSTRAINT_KEYWORDS = (

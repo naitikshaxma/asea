@@ -95,6 +95,8 @@ export const VerificationTaskInputSchema = z.object({
   baseSha: z.string().regex(/^[0-9a-f]{7,40}$/i, 'Must be a 7-40 character hex commit SHA'),
   headSha: z.string().regex(/^[0-9a-f]{7,40}$/i, 'Must be a 7-40 character hex commit SHA'),
   authorType: z.enum(['AI', 'HUMAN', 'UNKNOWN']).default('UNKNOWN'),
+  // Policy profile to score with; the workspace's default profile when omitted
+  policyProfileId: z.string().min(1).optional(),
 });
 
 export type VerificationTaskInput = z.infer<typeof VerificationTaskInputSchema>;

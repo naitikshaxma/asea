@@ -1,0 +1,38 @@
+{
+  "severity_weights": {
+    "critical": 50,
+    "high": 35,
+    "medium": 15,
+    "low": 5
+  },
+  "category_multipliers": {
+    "static": 1,
+    "negative_space": 1,
+    "architecture": 1,
+    "test_gap": 1
+  },
+  "source_multipliers": {
+    "deterministic": 1,
+    "llm": 0.5
+  },
+  "caps": [
+    {
+      "id": "critical_present",
+      "severity": "critical",
+      "min_count": 1,
+      "max_score": 39
+    },
+    {
+      "id": "two_or_more_high",
+      "severity": "high",
+      "min_count": 2,
+      "max_score": 59
+    }
+  ],
+  "verdict_bands": {
+    "allow": 90,
+    "review": 70,
+    "high_risk": 40,
+    "block": 0
+  }
+}

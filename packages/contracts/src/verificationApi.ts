@@ -1,9 +1,13 @@
 import { z } from 'zod';
 import { IsoTimestampSchema } from './request.js';
+import { PolicyConfigSchema } from './policy.js';
 
 // API responses for persisted ASEA verification runs. Enum values are the
 // database's (uppercase), like the rest of the API; the engine wire contract
 // (snake_case, lowercase enums) is in verification.ts.
+
+export const VerdictResponseEnum = z.enum(['ALLOW', 'REVIEW', 'HIGH_RISK', 'BLOCK']);
+export type VerdictResponse = z.infer<typeof VerdictResponseEnum>;
 
 export const VerificationRunResponseSchema = z.object({
   id: z.string(),
@@ -16,13 +20,58 @@ export const VerificationRunResponseSchema = z.object({
   authorType: z.enum(['AI', 'HUMAN', 'UNKNOWN']),
   status: z.enum(['QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED']),
   score: z.number().nullable(),
-  verdict: z.string().nullable(),
+  verdict: VerdictResponseEnum.nullable(),
+  // The policy profile the run was scored with and the hash of its config at
+  // submission time (the run keeps that snapshot even if the profile changes)
+  policyProfileId: z.string().nullable(),
+  policyHash: z.string().nullable(),
   findingCount: z.number().int(),
   startedAt: IsoTimestampSchema.optional(),
   completedAt: IsoTimestampSchema.optional(),
   createdAt: IsoTimestampSchema,
 });
 export type VerificationRunResponse = z.infer<typeof VerificationRunResponseSchema>;
+
+// "Why this score": the engine's ScoreResult (policy.ts) in API casing
+export const ScoreBreakdownResponseSchema = z.object({
+  score: z.number().int(),
+  verdict: VerdictResponseEnum,
+  rawScore: z.number(),
+  totalDeduction: z.number(),
+  policyHash: z.string(),
+  items: z.array(
+    z.object({
+      findingId: z.string(),
+      ruleId: z.string(),
+      title: z.string(),
+      category: z.enum(['STATIC', 'NEGATIVE_SPACE', 'ARCHITECTURE', 'TEST_GAP']),
+      severity: z.enum(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']),
+      source: z.enum(['DETERMINISTIC', 'LLM']),
+      severityWeight: z.number(),
+      categoryMultiplier: z.number(),
+      sourceMultiplier: z.number(),
+      deduction: z.number(),
+    })
+  ),
+  capsApplied: z.array(
+    z.object({
+      id: z.string(),
+      severity: z.enum(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']),
+      minCount: z.number().int(),
+      count: z.number().int(),
+      maxScore: z.number().int(),
+      loweredScore: z.boolean(),
+    })
+  ),
+});
+export type ScoreBreakdownResponse = z.infer<typeof ScoreBreakdownResponseSchema>;
+
+export const VerificationRunDetailResponseSchema = VerificationRunResponseSchema.extend({
+  // null until the run has been scored
+  scoreBreakdown: ScoreBreakdownResponseSchema.nullable(),
+  policySnapshot: PolicyConfigSchema.nullable(),
+});
+export type VerificationRunDetailResponse = z.infer<typeof VerificationRunDetailResponseSchema>;
 
 export const VerificationRunListResponseSchema = z.object({
   verificationRuns: z.array(VerificationRunResponseSchema),
@@ -73,5 +122,8 @@ export const AuditChainVerificationResponseSchema = z.object({
   // Whether the stored findings match the digest recorded when static analysis
   // completed; null until then
   findingsDigestValid: z.boolean().nullable(),
+  // Whether the stored score, verdict and breakdown match the SCORE_COMPUTED
+  // event; null until the run has been scored
+  scoreValid: z.boolean().nullable(),
 });
 export type AuditChainVerificationResponse = z.infer<typeof AuditChainVerificationResponseSchema>;

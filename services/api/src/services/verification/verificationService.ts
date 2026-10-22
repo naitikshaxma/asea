@@ -1,13 +1,20 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Prisma, PrismaClient, VerificationFinding, VerificationRun } from '@prisma/client';
-import type { AuthorType, Finding, StaticAnalysisResult } from '@autonomous-engineer/contracts';
+import {
+  PolicyConfigSchema,
+  type AuthorType,
+  type Finding,
+  type ScoreResult,
+  type StaticAnalysisResult,
+} from '@autonomous-engineer/contracts';
 import { prisma } from '../prisma.js';
 import { config } from '../../config.js';
 import { canonicalJson, chainAuditEvent, verifyAuditChain } from '../auditChain.js';
 import { resolveRepositoryFsPath } from '../intelligence/repositoryAnalysisService.js';
 import { buildVerificationRequest } from './gitDiff.js';
-import { requestStaticAnalysis } from './agentClient.js';
+import { requestScore, requestStaticAnalysis } from './agentClient.js';
 import { RUN_SEALED } from './runSeal.js';
+import { ensureDefaultPolicy, policyConfigHash, toResolvedPolicy, type ResolvedPolicy } from '../policy/policyService.js';
 
 type Db = PrismaClient | Prisma.TransactionClient;
 type FindingRow = Omit<VerificationFinding, 'id' | 'createdAt'>;
@@ -124,6 +131,37 @@ export function findingsDigest(rows: Array<Omit<FindingRow, 'verificationRunId'>
   return createHash('sha256').update(canonicalJson(canonical), 'utf8').digest('hex');
 }
 
+/** sha256 over the engine's ScoreResult, recorded in SCORE_COMPUTED so edits to the stored breakdown are detectable. */
+export function scoreDigest(score: unknown): string {
+  return createHash('sha256').update(canonicalJson(score), 'utf8').digest('hex');
+}
+
+/** The verdict as stored and returned by the API (uppercase, like the other enums). */
+export function toVerdictEnum(verdict: ScoreResult['verdict']): NonNullable<VerificationRun['verdict']> {
+  return verdict.toUpperCase() as NonNullable<VerificationRun['verdict']>;
+}
+
+/**
+ * The policy the run is scored with: the snapshot taken at submission, checked
+ * against its hash. Runs submitted before policy profiles existed get the
+ * workspace's default profile, snapshotted now.
+ */
+async function policyForRun(run: VerificationRun): Promise<ResolvedPolicy> {
+  if (run.policySnapshot !== null && run.policyHash !== null) {
+    const config = PolicyConfigSchema.parse(run.policySnapshot);
+    if (policyConfigHash(config) !== run.policyHash) {
+      throw new Error(`Policy snapshot of verification run ${run.id} does not match its policyHash`);
+    }
+    return { profileId: run.policyProfileId, config, hash: run.policyHash };
+  }
+  const resolved = toResolvedPolicy(await ensureDefaultPolicy(prisma, run.workspaceId));
+  await prisma.verificationRun.update({
+    where: { id: run.id },
+    data: { policyProfileId: resolved.profileId, policyHash: resolved.hash, policySnapshot: resolved.config },
+  });
+  return resolved;
+}
+
 function toFindingRow(verificationRunId: string, f: Finding): FindingRow {
   return {
     verificationRunId,
@@ -155,8 +193,9 @@ function summarize(result: StaticAnalysisResult) {
 
 /**
  * The STATIC_ANALYSIS step of a VERIFICATION task: builds the request from the
- * repository's git history, calls the engine, and persists the findings and
- * hash-chained audit events. score and verdict are left null.
+ * repository's git history, calls the engine's static-analysis and scoring
+ * nodes, and persists the findings, score, verdict and hash-chained audit
+ * events.
  */
 export async function runVerificationStep(args: {
   taskId: string;
@@ -182,11 +221,12 @@ export async function runVerificationStep(args: {
     where: { id: run.id },
     data: { status: 'RUNNING', startedAt: run.startedAt ?? new Date() },
   });
+  const policy = await policyForRun(run);
   await appendVerificationAuditEvent(
     prisma,
     run,
     'VERIFICATION_STARTED',
-    { attemptNumber: args.attemptNumber, baseSha: run.baseSha, headSha: run.headSha },
+    { attemptNumber: args.attemptNumber, baseSha: run.baseSha, headSha: run.headSha, policyHash: policy.hash },
     args.actorId
   );
 
@@ -204,8 +244,13 @@ export async function runVerificationStep(args: {
       maxRequestBytes: config.VERIFICATION_MAX_REQUEST_BYTES,
     });
     const result = await requestStaticAnalysis(request);
+    const score = await requestScore({ findings: result.findings, policy: policy.config });
+    if (score.policy_hash !== policy.hash) {
+      throw new Error(`Engine scored with policy ${score.policy_hash}, expected ${policy.hash}`);
+    }
+    const verdict = toVerdictEnum(score.verdict);
     const rows = result.findings.map((f) => toFindingRow(run.id, f));
-    const summary = summarize(result);
+    const summary = { ...summarize(result), score: score.score, verdict };
 
     await prisma.$transaction(async (tx) => {
       await tx.verificationFinding.createMany({ data: rows });
@@ -223,10 +268,30 @@ export async function runVerificationStep(args: {
         },
         args.actorId
       );
+      await appendVerificationAuditEvent(
+        tx,
+        run,
+        'SCORE_COMPUTED',
+        {
+          score: score.score,
+          verdict,
+          rawScore: score.raw_score,
+          policyHash: score.policy_hash,
+          policyProfileId: policy.profileId,
+          capsApplied: score.caps_applied.map((c) => c.id),
+          scoreDigest: scoreDigest(score),
+        },
+        args.actorId
+      );
       await finishVerificationRun(
         tx,
         run,
-        { status: 'COMPLETED', eventType: 'VERIFICATION_COMPLETED', metadata: { findingCount: rows.length } },
+        {
+          status: 'COMPLETED',
+          eventType: 'VERIFICATION_COMPLETED',
+          metadata: { findingCount: rows.length, score: score.score, verdict },
+          data: { score: score.score, verdict, scoreBreakdown: score },
+        },
         args.actorId
       );
     });

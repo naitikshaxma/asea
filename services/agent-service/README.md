@@ -44,6 +44,7 @@ pytest
 | `GET` | `/ready` | Service readiness and dependency connectivity |
 | `POST` | `/api/v1/analyze` | Repository task analysis and triage skeleton |
 | `POST` | `/api/v1/verify/static` | ASEA static analysis: `VerificationRequest` → `StaticAnalysisResult` |
+| `POST` | `/api/v1/verify/score` | Deterministic scoring: `{findings, policy}` → `ScoreResult` (score, verdict, per-finding breakdown, caps) |
 
 ## Security
 
@@ -52,6 +53,23 @@ Every `/api/v1/*` request needs the `X-Internal-Token` header set to
 routes return 503). There is no CORS: only the worker calls this service.
 Bodies over `AGENT_MAX_REQUEST_BYTES` (default 5 MiB) get 413. `/health` and
 `/ready` need no token.
+
+## Scoring (`POST /api/v1/verify/score`)
+
+Pure and deterministic (`app/verification/scoring.py`; models in
+`app/verification/policy.py`, mirrored by `packages/contracts/src/policy.ts`).
+Each finding deducts `severity_weight × category_multiplier ×
+source_multiplier` (rounded to 4 decimals) from 100; the remainder is rounded
+half-up and clamped to 0–100; every cap whose condition holds (at least
+`min_count` findings of a severity) limits the score to `max_score`; the
+verdict is the first of `allow`, `review`, `high_risk`, `block` whose minimum
+the score reaches. The result carries `policy_hash` (sha256 of the policy's
+canonical JSON), which the worker checks against the run's policy snapshot.
+
+The default policy (`packages/contracts/schemas/default-policy.json`) is a
+**placeholder**: its numbers were picked so the four demo fixtures land in
+distinct bands (clean → allow, no_tests → review, missing_auth → high_risk,
+secret_and_sql → block) and are not calibrated against real changes.
 
 ## Static analysis (`POST /api/v1/verify/static`)
 

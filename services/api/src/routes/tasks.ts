@@ -10,6 +10,7 @@ import { validateTaskTransition, isTaskCancellable } from '../services/workflowS
 import { dispatchPendingOutboxEvents } from '../services/outboxDispatcher.js';
 import { AppError } from '../middlewares/errorHandler.js';
 import { cancelVerificationRunForTask } from '../services/verification/verificationService.js';
+import { resolvePolicyForVerification } from '../services/policy/policyService.js';
 
 export const tasksRouter = Router({ mergeParams: true });
 
@@ -101,6 +102,10 @@ tasksRouter.post(
         }
       }
       const verification = validated.taskType === 'VERIFICATION' ? validated.verification : undefined;
+      // Resolved before the transaction: creating the default profile may race with another request
+      const policy = verification
+        ? await resolvePolicyForVerification(prisma, workspaceId, verification.policyProfileId)
+        : undefined;
 
       // Atomic Transaction: Task + Initial Workflow Run + Outbox Event
       const task = await prisma.$transaction(async (tx) => {
@@ -133,8 +138,9 @@ tasksRouter.post(
         });
 
         // A VERIFICATION task's inputs live on its VerificationRun; the
-        // description is the requirement the change is verified against
-        if (verification) {
+        // description is the requirement the change is verified against, and
+        // the policy is snapshotted so later profile edits don't change the run
+        if (verification && policy) {
           await tx.verificationRun.create({
             data: {
               workspaceId,
@@ -144,6 +150,9 @@ tasksRouter.post(
               headSha: verification.headSha,
               requirement: validated.description,
               authorType: verification.authorType,
+              policyProfileId: policy.profileId,
+              policyHash: policy.hash,
+              policySnapshot: policy.config,
               status: 'QUEUED',
             },
           });

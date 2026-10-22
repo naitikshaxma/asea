@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { VerificationRequest } from '@autonomous-engineer/contracts';
+import { DEFAULT_POLICY_CONFIG, type VerificationRequest } from '@autonomous-engineer/contracts';
 import { config } from '../../src/config.js';
-import { requestStaticAnalysis } from '../../src/services/verification/agentClient.js';
+import { requestScore, requestStaticAnalysis } from '../../src/services/verification/agentClient.js';
 
 const request: VerificationRequest = {
   repository_id: 'repo-1',
@@ -79,5 +79,29 @@ describe('agent service client', () => {
       new Response(JSON.stringify({ ...result, duration_ms: -1 }), { status: 200 })
     );
     await expect(requestStaticAnalysis(request)).rejects.toThrow();
+  });
+
+  it('POSTs findings and policy to the scoring node and validates the score result', async () => {
+    const score = {
+      score: 65,
+      verdict: 'high_risk',
+      raw_score: 65,
+      total_deduction: 35,
+      policy_hash: 'c'.repeat(64),
+      breakdown: [],
+      caps_applied: [],
+    };
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify(score), { status: 200 }));
+    const body = { findings: result.findings as any, policy: DEFAULT_POLICY_CONFIG };
+
+    await expect(requestScore(body)).resolves.toEqual(score);
+    const [url, init] = fetchSpy.mock.calls[0]!;
+    expect(String(url)).toBe('http://agent.internal:8000/api/v1/verify/score');
+    expect(JSON.parse(String(init?.body))).toEqual(body);
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ ...score, verdict: 'maybe' }), { status: 200 })
+    );
+    await expect(requestScore(body)).rejects.toThrow();
   });
 });

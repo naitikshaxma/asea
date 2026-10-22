@@ -4,7 +4,9 @@ import { createApp } from '../../src/app.js';
 import { prisma } from '../../src/services/prisma.js';
 import { generateToken } from '../../src/services/authService.js';
 import { chainAuditEvent, type ChainedAuditEvent } from '../../src/services/auditChain.js';
-import { findingsDigest } from '../../src/services/verification/verificationService.js';
+import { findingsDigest, scoreDigest } from '../../src/services/verification/verificationService.js';
+import { policyConfigHash } from '../../src/services/policy/policyService.js';
+import { DEFAULT_POLICY_CONFIG, type ScoreResult } from '@autonomous-engineer/contracts';
 
 describe('Verification run routes', () => {
   const app = createApp();
@@ -12,6 +14,29 @@ describe('Verification run routes', () => {
   const runId = 'vr-r';
   const base = `/api/v1/workspaces/${workspaceId}/verification-runs`;
   const token = generateToken({ userId: 'user-r', email: 'r@example.com' });
+  const policyHash = policyConfigHash(DEFAULT_POLICY_CONFIG);
+  const scoreResult: ScoreResult = {
+    score: 65,
+    verdict: 'high_risk',
+    raw_score: 65,
+    total_deduction: 35,
+    policy_hash: policyHash,
+    breakdown: [
+      {
+        finding_id: 'f-route',
+        rule_id: 'ASEA-PY-ROUTE-NO-AUTH',
+        title: 'Route handler has no authentication decorator',
+        category: 'static',
+        severity: 'high',
+        source: 'deterministic',
+        severity_weight: 35,
+        category_multiplier: 1,
+        source_multiplier: 1,
+        deduction: 35,
+      },
+    ],
+    caps_applied: [],
+  };
 
   const run = {
     id: runId,
@@ -23,8 +48,12 @@ describe('Verification run routes', () => {
     requirement: 'Only authenticated users may export.',
     authorType: 'AI',
     status: 'COMPLETED',
-    score: null,
-    verdict: null,
+    score: 65 as number | null,
+    verdict: 'HIGH_RISK' as string | null,
+    scoreBreakdown: scoreResult as unknown,
+    policyProfileId: 'pol-default',
+    policyHash,
+    policySnapshot: DEFAULT_POLICY_CONFIG as unknown,
     startedAt: new Date('2026-10-21T10:00:00Z'),
     completedAt: new Date('2026-10-21T10:00:05Z'),
     createdAt: new Date('2026-10-21T09:59:59Z'),
@@ -53,18 +82,19 @@ describe('Verification run routes', () => {
   let events: ChainedAuditEvent[];
   let runRow: typeof run;
 
-  // A completed run's chain, sealed the way finishVerificationRun seals it
+  // A completed, scored run's chain, sealed the way finishVerificationRun seals it
   function buildChain(): ChainedAuditEvent[] {
     const chain: ChainedAuditEvent[] = [];
     let last: string | null = null;
     const metadata: Array<Record<string, unknown>> = [
-      { attemptNumber: 1 },
+      { attemptNumber: 1, policyHash },
       { attemptNumber: 1, findingCount: 1, findingsDigest: findingsDigest([finding as any]) },
-      { findingCount: 1 },
+      { score: 65, verdict: 'HIGH_RISK', rawScore: 65, policyHash, policyProfileId: 'pol-default', capsApplied: [], scoreDigest: scoreDigest(scoreResult) },
+      { findingCount: 1, score: 65, verdict: 'HIGH_RISK' },
     ];
-    ['VERIFICATION_STARTED', 'STATIC_ANALYSIS_COMPLETED', 'VERIFICATION_COMPLETED', 'RUN_SEALED'].forEach((eventType, i) => {
+    ['VERIFICATION_STARTED', 'STATIC_ANALYSIS_COMPLETED', 'SCORE_COMPUTED', 'VERIFICATION_COMPLETED', 'RUN_SEALED'].forEach((eventType, i) => {
       if (eventType === 'RUN_SEALED') {
-        metadata[i] = { status: 'COMPLETED', auditHeadHash: last, auditEventCount: 3 };
+        metadata[i] = { status: 'COMPLETED', auditHeadHash: last, auditEventCount: 4 };
       }
       const fields = {
         id: `evt-${i}`,
@@ -87,7 +117,7 @@ describe('Verification run routes', () => {
   beforeEach(() => {
     findingRows = [{ ...finding }];
     events = buildChain();
-    runRow = { ...run, auditHeadHash: events[2]!.hash, auditEventCount: 3 };
+    runRow = { ...run, auditHeadHash: events[3]!.hash, auditEventCount: 4 };
     vi.spyOn(prisma.workspaceMembership, 'findUnique').mockResolvedValue({
       id: 'mem-r',
       workspaceId,
@@ -110,17 +140,56 @@ describe('Verification run routes', () => {
 
   const get = (url: string) => request(app).get(url).set('Authorization', `Bearer ${token}`);
 
-  it('lists a task\'s verification runs and returns one run with null score and verdict', async () => {
+  it('lists a task\'s verification runs and returns one run with its score, verdict and breakdown', async () => {
     const list = await get(`${base}?taskId=task-r`);
     expect(list.status).toBe(200);
     expect(prisma.verificationRun.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { workspaceId, taskId: 'task-r' } })
     );
-    expect(list.body.verificationRuns[0]).toMatchObject({ id: runId, findingCount: 1, score: null, verdict: null });
+    expect(list.body.verificationRuns[0]).toMatchObject({
+      id: runId,
+      findingCount: 1,
+      score: 65,
+      verdict: 'HIGH_RISK',
+      policyProfileId: 'pol-default',
+      policyHash,
+    });
+    // The list stays light: no breakdown or snapshot
+    expect(list.body.verificationRuns[0]).not.toHaveProperty('scoreBreakdown');
 
     const one = await get(`${base}/${runId}`);
     expect(one.status).toBe(200);
     expect(one.body).toMatchObject({ id: runId, status: 'COMPLETED', authorType: 'AI', taskId: 'task-r' });
+    expect(one.body.policySnapshot).toEqual(DEFAULT_POLICY_CONFIG);
+    expect(one.body.scoreBreakdown).toEqual({
+      score: 65,
+      verdict: 'HIGH_RISK',
+      rawScore: 65,
+      totalDeduction: 35,
+      policyHash,
+      items: [
+        {
+          findingId: 'f-route',
+          ruleId: 'ASEA-PY-ROUTE-NO-AUTH',
+          title: 'Route handler has no authentication decorator',
+          category: 'STATIC',
+          severity: 'HIGH',
+          source: 'DETERMINISTIC',
+          severityWeight: 35,
+          categoryMultiplier: 1,
+          sourceMultiplier: 1,
+          deduction: 35,
+        },
+      ],
+      capsApplied: [],
+    });
+  });
+
+  it('returns null breakdown and snapshot for a run that has not been scored', async () => {
+    runRow = { ...runRow, status: 'QUEUED', score: null, verdict: null, scoreBreakdown: null, policySnapshot: null };
+    const one = await get(`${base}/${runId}`);
+    expect(one.status).toBe(200);
+    expect(one.body).toMatchObject({ score: null, verdict: null, scoreBreakdown: null, policySnapshot: null });
   });
 
   it('returns a run\'s findings and filters by severity', async () => {
@@ -154,16 +223,28 @@ describe('Verification run routes', () => {
 
   const verify = async () => (await get(`${base}/${runId}/audit/verify`)).body;
 
-  it('verifies an intact, sealed audit chain and the findings digest', async () => {
+  it('verifies an intact, sealed audit chain, the findings digest and the stored score', async () => {
     expect(await verify()).toEqual({
       verificationRunId: runId,
       valid: true,
-      length: 4,
-      headHash: events[3]!.hash,
+      length: 5,
+      headHash: events[4]!.hash,
       chain: { valid: true },
       seal: { required: true, valid: true },
       findingsDigestValid: true,
+      scoreValid: true,
     });
+  });
+
+  it.each([
+    ['score', { score: 95 }],
+    ['verdict', { verdict: 'ALLOW' }],
+    ['breakdown', { scoreBreakdown: { ...scoreResult, breakdown: [] } }],
+    ['policy snapshot', { policySnapshot: { ...DEFAULT_POLICY_CONFIG, source_multipliers: { deterministic: 0, llm: 0 } } }],
+    ['policy hash', { policyHash: 'a'.repeat(64) }],
+  ])('reports a stored %s edited after scoring', async (_label, edit) => {
+    runRow = { ...runRow, ...edit };
+    expect(await verify()).toMatchObject({ valid: false, chain: { valid: true }, seal: { valid: true }, scoreValid: false });
   });
 
   it('reports a tampered audit event', async () => {
@@ -198,14 +279,19 @@ describe('Verification run routes', () => {
     runRow = { ...runRow, auditEventCount: 2 };
     expect(await verify()).toMatchObject({ valid: false, seal: { valid: false, reason: expect.stringMatching(/event count/) } });
 
-    runRow = { ...runRow, auditEventCount: 3, auditHeadHash: events[1]!.hash };
+    runRow = { ...runRow, auditEventCount: 4, auditHeadHash: events[1]!.hash };
     expect(await verify()).toMatchObject({ valid: false, seal: { valid: false, reason: expect.stringMatching(/head hash/) } });
   });
 
   it('does not require a seal while the run is in progress', async () => {
     runRow = { ...runRow, status: 'RUNNING', auditHeadHash: null, auditEventCount: null };
     events = events.slice(0, 1);
-    expect(await verify()).toMatchObject({ valid: true, seal: { required: false, valid: null }, findingsDigestValid: null });
+    expect(await verify()).toMatchObject({
+      valid: true,
+      seal: { required: false, valid: null },
+      findingsDigestValid: null,
+      scoreValid: null,
+    });
   });
 
   it('returns 404 for a run in another workspace and requires auth and membership', async () => {

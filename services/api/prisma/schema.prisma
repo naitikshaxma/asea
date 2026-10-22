@@ -38,6 +38,13 @@ enum VerificationRunStatus {
   CANCELLED
 }
 
+enum Verdict {
+  ALLOW
+  REVIEW
+  HIGH_RISK
+  BLOCK
+}
+
 enum AuthorType {
   AI
   HUMAN
@@ -165,6 +172,7 @@ model Workspace {
   auditEvents AuditEvent[]
   analyses    RepositoryAnalysis[]
   verificationRuns VerificationRun[]
+  policyProfiles PolicyProfile[]
 
   @@index([ownerId])
 }
@@ -361,8 +369,30 @@ model RepositoryAnalysis {
   @@index([createdAt])
 }
 
+// How a workspace turns findings into a score and verdict. config is a
+// PolicyConfig document (packages/contracts/src/policy.ts); configHash is the
+// sha256 of its canonical JSON. Each workspace has exactly one default profile
+// (enforced by policyService.ts).
+model PolicyProfile {
+  id          String   @id @default(uuid())
+  workspaceId String
+  name        String
+  description String?
+  config      Json
+  configHash  String
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace        Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  verificationRuns VerificationRun[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
 // ASEA verification of a change (baseSha..headSha) against a requirement.
-// score and verdict stay null until scoring exists.
+// score, verdict and scoreBreakdown are null until the run has been scored.
 model VerificationRun {
   id           String                @id @default(uuid())
   workspaceId  String
@@ -374,7 +404,14 @@ model VerificationRun {
   authorType   AuthorType
   status       VerificationRunStatus @default(QUEUED)
   score        Float?
-  verdict      String?
+  verdict      Verdict?
+  // The engine's ScoreResult ("why this score")
+  scoreBreakdown Json?
+  // Policy chosen at submission; the run keeps a snapshot of its config and
+  // the config's hash, so later edits to the profile don't change the run
+  policyProfileId String?
+  policyHash      String?
+  policySnapshot  Json?
   startedAt    DateTime?
   completedAt  DateTime?
   // Seal set when the run reaches a terminal state: the audit chain's head
@@ -387,12 +424,14 @@ model VerificationRun {
   workspace    Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   repository   Repository            @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
   task         Task?                 @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  policyProfile PolicyProfile?       @relation(fields: [policyProfileId], references: [id], onDelete: SetNull)
   findings     VerificationFinding[]
 
   @@index([workspaceId])
   @@index([repositoryId])
   @@index([taskId])
   @@index([status])
+  @@index([policyProfileId])
 }
 
 // A Finding from the verification engine; findingId is the engine's Finding.id

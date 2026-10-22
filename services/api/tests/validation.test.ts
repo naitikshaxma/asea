@@ -3,6 +3,8 @@ import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { prisma } from '../src/services/prisma.js';
 import { generateToken } from '../src/services/authService.js';
+import { DEFAULT_POLICY_CONFIG } from '@autonomous-engineer/contracts';
+import { policyConfigHash } from '../src/services/policy/policyService.js';
 
 // Every Prisma call is stubbed so these tests behave the same whether or not
 // a database is reachable.
@@ -101,8 +103,22 @@ describe('API Validation and Task Routes', () => {
     const submit = (body: object) =>
       request(app).post(`/api/v1/workspaces/${workspaceId}/tasks`).set('Authorization', `Bearer ${token}`).send(body);
 
-    it('creates a QUEUED VerificationRun with the inputs in the same transaction as the task', async () => {
+    const defaultHash = policyConfigHash(DEFAULT_POLICY_CONFIG);
+    const strictConfig = { ...DEFAULT_POLICY_CONFIG, verdict_bands: { allow: 95, review: 80, high_risk: 50, block: 0 } };
+    const profiles = [
+      { id: 'pol-default', workspaceId, name: 'default', isDefault: true, config: DEFAULT_POLICY_CONFIG, configHash: defaultHash },
+      { id: 'pol-strict', workspaceId, name: 'strict', isDefault: false, config: strictConfig, configHash: policyConfigHash(strictConfig) },
+    ];
+    function stubPolicies() {
+      vi.spyOn(prisma.policyProfile, 'findFirst').mockImplementation((async ({ where }: any) =>
+        profiles.find(
+          (p) => p.workspaceId === where.workspaceId && (where.id ? p.id === where.id : p.isDefault === where.isDefault)
+        ) ?? null) as any);
+    }
+
+    it('creates a QUEUED VerificationRun with the inputs and the default policy snapshot in the task transaction', async () => {
       mockMembership();
+      stubPolicies();
       vi.spyOn(prisma.repository, 'findFirst').mockResolvedValue({ id: 'repo-val-01', workspaceId } as any);
       const tx = stubTransaction();
 
@@ -119,9 +135,46 @@ describe('API Validation and Task Routes', () => {
           headSha: 'b'.repeat(40),
           requirement: verificationPayload.description,
           authorType: 'AI',
+          policyProfileId: 'pol-default',
+          policyHash: defaultHash,
+          policySnapshot: DEFAULT_POLICY_CONFIG,
           status: 'QUEUED',
         },
       });
+    });
+
+    it('snapshots an explicitly chosen policy profile and rejects one from another workspace', async () => {
+      mockMembership();
+      stubPolicies();
+      vi.spyOn(prisma.repository, 'findFirst').mockResolvedValue({ id: 'repo-val-01', workspaceId } as any);
+      const tx = stubTransaction();
+
+      const chosen = await submit({ ...verificationPayload, verification: { ...verificationPayload.verification, policyProfileId: 'pol-strict' } });
+      expect(chosen.status).toBe(201);
+      expect(tx.verificationRun.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          policyProfileId: 'pol-strict',
+          policyHash: policyConfigHash(strictConfig),
+          policySnapshot: strictConfig,
+        }),
+      });
+
+      tx.verificationRun.create.mockClear();
+      const foreign = await submit({ ...verificationPayload, verification: { ...verificationPayload.verification, policyProfileId: 'pol-elsewhere' } });
+      expect(foreign.status).toBe(400);
+      expect(foreign.body.error.message).toMatch(/policy profile does not belong/);
+      expect(tx.verificationRun.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a policy profile whose stored config no longer matches its hash', async () => {
+      mockMembership();
+      vi.spyOn(prisma.repository, 'findFirst').mockResolvedValue({ id: 'repo-val-01', workspaceId } as any);
+      vi.spyOn(prisma.policyProfile, 'findFirst').mockResolvedValue({ ...profiles[0], configHash: 'f'.repeat(64) } as any);
+      const tx = stubTransaction();
+
+      const res = await submit(verificationPayload);
+      expect(res.status).toBe(500);
+      expect(tx.verificationRun.create).not.toHaveBeenCalled();
     });
 
     it('requires repositoryId and verification inputs, with hex SHAs', async () => {

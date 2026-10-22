@@ -12,6 +12,7 @@ import { repositoriesRouter } from './routes/repositories.js';
 import { intelligenceRouter } from './routes/intelligence.js';
 import { tasksRouter } from './routes/tasks.js';
 import { verificationRouter } from './routes/verification.js';
+import { policiesRouter } from './routes/policies.js';
 import { config, type EnvConfig } from './config.js';
 
 export function createApp(customConfig?: Partial<EnvConfig>): Application {
@@ -47,6 +48,7 @@ export function createApp(customConfig?: Partial<EnvConfig>): Application {
   app.use('/api/v1', intelligenceRouter);
   app.use('/api/v1', tasksRouter);
   app.use('/api/v1', verificationRouter);
+  app.use('/api/v1', policiesRouter);
 
   // 404 handler
   app.use(notFoundHandler);

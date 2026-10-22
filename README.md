@@ -192,9 +192,15 @@ npm run dev:agent
 ### ASEA Verification Endpoints
 Submit a `VERIFICATION` task (see [docs/development.md](docs/development.md)); the agent service must be running with the same `INTERNAL_SERVICE_TOKEN`.
 - `GET /api/v1/workspaces/:workspaceId/verification-runs?taskId=` — Verification runs (latest first), optionally for one task
-- `GET /api/v1/workspaces/:workspaceId/verification-runs/:runId` — One verification run (score and verdict are null until scoring exists)
+- `GET /api/v1/workspaces/:workspaceId/verification-runs/:runId` — One verification run with its score, verdict (`ALLOW`, `REVIEW`, `HIGH_RISK`, `BLOCK`), per-finding score breakdown and the policy snapshot it was scored with (null until scored)
 - `GET /api/v1/workspaces/:workspaceId/verification-runs/:runId/findings?severity=` — The run's findings
-- `GET /api/v1/workspaces/:workspaceId/verification-runs/:runId/audit/verify` — Checks the run's audit hash chain, its seal (a terminal run must end with RUN_SEALED matching the head hash and event count stored on the run, so removed trailing events are detected) and the findings digest
+- `GET /api/v1/workspaces/:workspaceId/verification-runs/:runId/audit/verify` — Checks the run's audit hash chain, its seal (a terminal run must end with RUN_SEALED matching the head hash and event count stored on the run, so removed trailing events are detected), the findings digest, and that the stored score, verdict, breakdown and policy snapshot match the SCORE_COMPUTED event
+- `GET /api/v1/workspaces/:workspaceId/repositories/:repositoryId/refs` — Local branches (name, commit SHA, subject) to pick `baseSha`/`headSha` from
+
+### Policy Profiles
+A policy turns findings into a score and verdict (see `packages/contracts/src/policy.ts`). Each workspace gets a `default` profile on first use; its weights are uncalibrated placeholders. A VERIFICATION task may name `verification.policyProfileId`; the run stores a snapshot of that profile's config and its hash, so later edits only affect new runs.
+- `GET|POST /api/v1/workspaces/:workspaceId/policies` — List (members) / create (admins)
+- `GET|PATCH|DELETE /api/v1/workspaces/:workspaceId/policies/:policyId` — Read (members) / update or delete (admins; the default profile cannot be deleted)
 
 ---
 

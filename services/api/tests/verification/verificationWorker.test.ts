@@ -3,18 +3,24 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Job } from 'bullmq';
-import type { StaticAnalysisResult, VerificationRequest } from '@autonomous-engineer/contracts';
+import {
+  DEFAULT_POLICY_CONFIG,
+  type ScoreResult,
+  type StaticAnalysisResult,
+  type VerificationRequest,
+} from '@autonomous-engineer/contracts';
 
-vi.mock('../../src/services/verification/agentClient.js', () => ({ requestStaticAnalysis: vi.fn() }));
+vi.mock('../../src/services/verification/agentClient.js', () => ({ requestStaticAnalysis: vi.fn(), requestScore: vi.fn() }));
 vi.mock('../../src/services/verification/gitDiff.js', () => ({ buildVerificationRequest: vi.fn() }));
 
 import { prisma } from '../../src/services/prisma.js';
 import { config } from '../../src/config.js';
 import { processTaskJob } from '../../src/worker.js';
-import { requestStaticAnalysis } from '../../src/services/verification/agentClient.js';
+import { requestScore, requestStaticAnalysis } from '../../src/services/verification/agentClient.js';
 import { buildVerificationRequest } from '../../src/services/verification/gitDiff.js';
 import { verifyAuditChain } from '../../src/services/auditChain.js';
-import { findingsDigest } from '../../src/services/verification/verificationService.js';
+import { findingsDigest, scoreDigest } from '../../src/services/verification/verificationService.js';
+import { policyConfigHash } from '../../src/services/policy/policyService.js';
 import { verifyRunSeal } from '../../src/services/verification/runSeal.js';
 import type { TaskJobPayload } from '../../src/services/queueService.js';
 
@@ -49,6 +55,22 @@ const engineResult: StaticAnalysisResult = {
   tools_unavailable: [],
   duration_ms: 12,
   semgrep_ruleset_sha256: 'c7b5'.padEnd(64, '0'),
+};
+
+const defaultPolicyHash = policyConfigHash(DEFAULT_POLICY_CONFIG);
+
+// What the engine returns for engineResult's findings under the default policy
+const scoreResult: ScoreResult = {
+  score: 50,
+  verdict: 'high_risk',
+  raw_score: 50,
+  total_deduction: 50,
+  policy_hash: defaultPolicyHash,
+  breakdown: [
+    { finding_id: 'f-route', rule_id: 'ASEA-PY-ROUTE-NO-AUTH', title: 'Route handler has no authentication decorator', category: 'static', severity: 'high', source: 'deterministic', severity_weight: 35, category_multiplier: 1, source_multiplier: 1, deduction: 35 },
+    { finding_id: 'f-gap', rule_id: 'ASEA-PY-TEST-GAP', title: 'New public function is not referenced by any test', category: 'test_gap', severity: 'medium', source: 'deterministic', severity_weight: 15, category_multiplier: 1, source_multiplier: 1, deduction: 15 },
+  ],
+  caps_applied: [],
 };
 
 const builtRequest: VerificationRequest = {
@@ -114,6 +136,10 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
       status: 'QUEUED',
       score: null,
       verdict: null,
+      scoreBreakdown: null,
+      policyProfileId: 'pol-default',
+      policyHash: defaultPolicyHash,
+      policySnapshot: DEFAULT_POLICY_CONFIG,
       startedAt: null,
       completedAt: null,
       auditHeadHash: null,
@@ -171,6 +197,7 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
 
     vi.mocked(buildVerificationRequest).mockReset().mockResolvedValue(builtRequest);
     vi.mocked(requestStaticAnalysis).mockReset().mockResolvedValue(engineResult);
+    vi.mocked(requestScore).mockReset().mockResolvedValue(scoreResult);
   });
 
   afterEach(() => {
@@ -179,7 +206,7 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
     fs.rmSync(repoDir, { recursive: true, force: true });
   });
 
-  it('runs static analysis, persists findings and a valid audit chain, and completes the task', async () => {
+  it('runs static analysis and scoring, persists findings, score and a valid audit chain, and completes the task', async () => {
     await processTaskJob(job(0));
 
     expect(vi.mocked(buildVerificationRequest)).toHaveBeenCalledWith(
@@ -193,6 +220,8 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
       })
     );
     expect(vi.mocked(requestStaticAnalysis)).toHaveBeenCalledWith(builtRequest);
+    // Scored with the run's policy snapshot
+    expect(vi.mocked(requestScore)).toHaveBeenCalledWith({ findings: engineResult.findings, policy: DEFAULT_POLICY_CONFIG });
 
     // Only the context check and static analysis; no placeholder steps
     expect(steps.map((s) => s.stepType)).toEqual(['VALIDATE_CONTEXT', 'STATIC_ANALYSIS']);
@@ -203,6 +232,8 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
       toolsRun: ['python-ast', 'semgrep'],
       toolsUnavailable: [],
       semgrepRulesetSha256: 'c7b5'.padEnd(64, '0'),
+      score: 50,
+      verdict: 'HIGH_RISK',
     });
     // The ruleset hash is also in the audit chain
     expect(chain().find((a) => a.eventType === 'STATIC_ANALYSIS_COMPLETED')!.metadata.semgrepRulesetSha256).toBe(
@@ -214,24 +245,37 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
       expect.objectContaining({ findingId: 'f-gap', category: 'TEST_GAP', severity: 'MEDIUM' }),
     ]);
     expect(verificationRun.status).toBe('COMPLETED');
-    expect(verificationRun.score).toBeNull();
-    expect(verificationRun.verdict).toBeNull();
+    expect(verificationRun.score).toBe(50);
+    expect(verificationRun.verdict).toBe('HIGH_RISK');
+    expect(verificationRun.scoreBreakdown).toEqual(scoreResult);
     expect(task.status).toBe('COMPLETED');
 
     expect(eventTypes()).toEqual([
       'VERIFICATION_STARTED',
       'STATIC_ANALYSIS_COMPLETED',
+      'SCORE_COMPUTED',
       'VERIFICATION_COMPLETED',
       'RUN_SEALED',
     ]);
     const verified = verifyAuditChain(chain());
-    expect(verified).toMatchObject({ valid: true, length: 4 });
+    expect(verified).toMatchObject({ valid: true, length: 5 });
+    expect(chain()[0]!.metadata).toMatchObject({ policyHash: defaultPolicyHash });
+    expect(chain()[2]!.metadata).toEqual({
+      score: 50,
+      verdict: 'HIGH_RISK',
+      rawScore: 50,
+      policyHash: defaultPolicyHash,
+      policyProfileId: 'pol-default',
+      capsApplied: [],
+      scoreDigest: scoreDigest(scoreResult),
+    });
+    expect(chain()[3]!.metadata).toEqual({ findingCount: 2, score: 50, verdict: 'HIGH_RISK' });
 
     // Sealed: the run stores the head and count as of VERIFICATION_COMPLETED, and RUN_SEALED records them
-    const completedEvent = chain()[2]!;
+    const completedEvent = chain()[3]!;
     expect(verificationRun.auditHeadHash).toBe(completedEvent.hash);
-    expect(verificationRun.auditEventCount).toBe(3);
-    expect(chain()[3]!.metadata).toEqual({ status: 'COMPLETED', auditHeadHash: completedEvent.hash, auditEventCount: 3 });
+    expect(verificationRun.auditEventCount).toBe(4);
+    expect(chain()[4]!.metadata).toEqual({ status: 'COMPLETED', auditHeadHash: completedEvent.hash, auditEventCount: 4 });
     expect(verifyRunSeal(verificationRun as any, chain() as any, verified)).toEqual({ required: true, valid: true });
     const completed = chain().find((a) => a.eventType === 'STATIC_ANALYSIS_COMPLETED')!;
     expect(completed.metadata.findingsDigest).toBe(findingsDigest(findings as any));
@@ -252,12 +296,13 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
       'VERIFICATION_ATTEMPT_FAILED',
       'VERIFICATION_STARTED',
       'STATIC_ANALYSIS_COMPLETED',
+      'SCORE_COMPUTED',
       'VERIFICATION_COMPLETED',
       'RUN_SEALED',
     ]);
     expect(chain()[1].metadata).toEqual({ attemptNumber: 1, error: 'Agent service returned 503' });
-    expect(verifyAuditChain(chain())).toMatchObject({ valid: true, length: 6 });
-    expect(verificationRun.auditEventCount).toBe(5);
+    expect(verifyAuditChain(chain())).toMatchObject({ valid: true, length: 7 });
+    expect(verificationRun.auditEventCount).toBe(6);
     expect(verificationRun.status).toBe('COMPLETED');
     expect(findings).toHaveLength(2);
     // The successful attempt's steps are in the attempt-2 run
@@ -265,6 +310,44 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
       'VALIDATE_CONTEXT',
       'STATIC_ANALYSIS',
     ]);
+  });
+
+  it('fails the attempt when the engine scored with a different policy', async () => {
+    vi.mocked(requestScore).mockResolvedValueOnce({ ...scoreResult, policy_hash: 'e'.repeat(64) });
+
+    await expect(processTaskJob(job(0))).rejects.toThrow(`Engine scored with policy ${'e'.repeat(64)}, expected ${defaultPolicyHash}`);
+    expect(findings).toHaveLength(0);
+    expect(verificationRun.score).toBeNull();
+    expect(eventTypes()).toEqual(['VERIFICATION_STARTED', 'VERIFICATION_ATTEMPT_FAILED']);
+  });
+
+  it('refuses a policy snapshot that no longer matches its hash', async () => {
+    verificationRun.policySnapshot = { ...DEFAULT_POLICY_CONFIG, verdict_bands: { allow: 50, review: 40, high_risk: 30, block: 0 } };
+
+    await expect(processTaskJob(job(0))).rejects.toThrow('Policy snapshot of verification run vr-1 does not match its policyHash');
+    expect(vi.mocked(requestScore)).not.toHaveBeenCalled();
+  });
+
+  it('scores a run submitted before policy profiles existed with the workspace default, and snapshots it', async () => {
+    Object.assign(verificationRun, { policyProfileId: null, policyHash: null, policySnapshot: null });
+    vi.spyOn(prisma.policyProfile, 'findFirst').mockResolvedValue({
+      id: 'pol-default',
+      workspaceId,
+      name: 'default',
+      isDefault: true,
+      config: DEFAULT_POLICY_CONFIG,
+      configHash: defaultPolicyHash,
+    } as any);
+
+    await processTaskJob(job(0));
+
+    expect(verificationRun).toMatchObject({
+      policyProfileId: 'pol-default',
+      policyHash: defaultPolicyHash,
+      policySnapshot: DEFAULT_POLICY_CONFIG,
+      verdict: 'HIGH_RISK',
+      status: 'COMPLETED',
+    });
   });
 
   it('marks the verification run FAILED on the final attempt', async () => {

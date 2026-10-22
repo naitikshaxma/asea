@@ -262,5 +262,576 @@
     ],
     "additionalProperties": false,
     "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "PolicyConfig": {
+    "type": "object",
+    "properties": {
+      "severity_weights": {
+        "type": "object",
+        "properties": {
+          "critical": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "high": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "medium": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "low": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "critical",
+          "high",
+          "medium",
+          "low"
+        ],
+        "additionalProperties": false
+      },
+      "category_multipliers": {
+        "type": "object",
+        "properties": {
+          "static": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 10
+          },
+          "negative_space": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 10
+          },
+          "architecture": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 10
+          },
+          "test_gap": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 10
+          }
+        },
+        "required": [
+          "static",
+          "negative_space",
+          "architecture",
+          "test_gap"
+        ],
+        "additionalProperties": false
+      },
+      "source_multipliers": {
+        "type": "object",
+        "properties": {
+          "deterministic": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 10
+          },
+          "llm": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 10
+          }
+        },
+        "required": [
+          "deterministic",
+          "llm"
+        ],
+        "additionalProperties": false
+      },
+      "caps": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "severity": {
+              "type": "string",
+              "enum": [
+                "critical",
+                "high",
+                "medium",
+                "low"
+              ]
+            },
+            "min_count": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_score": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            }
+          },
+          "required": [
+            "id",
+            "severity",
+            "min_count",
+            "max_score"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "verdict_bands": {
+        "type": "object",
+        "properties": {
+          "allow": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "review": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "high_risk": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "block": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "allow",
+          "review",
+          "high_risk",
+          "block"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "severity_weights",
+      "category_multipliers",
+      "source_multipliers",
+      "caps",
+      "verdict_bands"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "ScoreRequest": {
+    "type": "object",
+    "properties": {
+      "findings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "category": {
+              "type": "string",
+              "enum": [
+                "static",
+                "negative_space",
+                "architecture",
+                "test_gap"
+              ]
+            },
+            "severity": {
+              "type": "string",
+              "enum": [
+                "critical",
+                "high",
+                "medium",
+                "low"
+              ]
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1
+            },
+            "file": {
+              "type": "string",
+              "minLength": 1
+            },
+            "line": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "deterministic",
+                "llm"
+              ]
+            },
+            "rule_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "remediation": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "category",
+            "severity",
+            "title",
+            "file",
+            "line",
+            "evidence",
+            "source",
+            "rule_id",
+            "remediation"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "policy": {
+        "type": "object",
+        "properties": {
+          "severity_weights": {
+            "type": "object",
+            "properties": {
+              "critical": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "high": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "medium": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "low": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              }
+            },
+            "required": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ],
+            "additionalProperties": false
+          },
+          "category_multipliers": {
+            "type": "object",
+            "properties": {
+              "static": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 10
+              },
+              "negative_space": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 10
+              },
+              "architecture": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 10
+              },
+              "test_gap": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 10
+              }
+            },
+            "required": [
+              "static",
+              "negative_space",
+              "architecture",
+              "test_gap"
+            ],
+            "additionalProperties": false
+          },
+          "source_multipliers": {
+            "type": "object",
+            "properties": {
+              "deterministic": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 10
+              },
+              "llm": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 10
+              }
+            },
+            "required": [
+              "deterministic",
+              "llm"
+            ],
+            "additionalProperties": false
+          },
+          "caps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "critical",
+                    "high",
+                    "medium",
+                    "low"
+                  ]
+                },
+                "min_count": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "max_score": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100
+                }
+              },
+              "required": [
+                "id",
+                "severity",
+                "min_count",
+                "max_score"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "verdict_bands": {
+            "type": "object",
+            "properties": {
+              "allow": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "review": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "high_risk": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "block": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100
+              }
+            },
+            "required": [
+              "allow",
+              "review",
+              "high_risk",
+              "block"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "severity_weights",
+          "category_multipliers",
+          "source_multipliers",
+          "caps",
+          "verdict_bands"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "findings",
+      "policy"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "ScoreResult": {
+    "type": "object",
+    "properties": {
+      "score": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 100
+      },
+      "verdict": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "review",
+          "high_risk",
+          "block"
+        ]
+      },
+      "raw_score": {
+        "type": "number"
+      },
+      "total_deduction": {
+        "type": "number"
+      },
+      "policy_hash": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64
+      },
+      "breakdown": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "finding_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "rule_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "title": {
+              "type": "string"
+            },
+            "category": {
+              "type": "string",
+              "enum": [
+                "static",
+                "negative_space",
+                "architecture",
+                "test_gap"
+              ]
+            },
+            "severity": {
+              "type": "string",
+              "enum": [
+                "critical",
+                "high",
+                "medium",
+                "low"
+              ]
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "deterministic",
+                "llm"
+              ]
+            },
+            "severity_weight": {
+              "type": "number"
+            },
+            "category_multiplier": {
+              "type": "number"
+            },
+            "source_multiplier": {
+              "type": "number"
+            },
+            "deduction": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "finding_id",
+            "rule_id",
+            "title",
+            "category",
+            "severity",
+            "source",
+            "severity_weight",
+            "category_multiplier",
+            "source_multiplier",
+            "deduction"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "caps_applied": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "severity": {
+              "type": "string",
+              "enum": [
+                "critical",
+                "high",
+                "medium",
+                "low"
+              ]
+            },
+            "min_count": {
+              "type": "integer"
+            },
+            "count": {
+              "type": "integer"
+            },
+            "max_score": {
+              "type": "integer"
+            },
+            "lowered_score": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "severity",
+            "min_count",
+            "count",
+            "max_score",
+            "lowered_score"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "score",
+      "verdict",
+      "raw_score",
+      "total_deduction",
+      "policy_hash",
+      "breakdown",
+      "caps_applied"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
   }
 }

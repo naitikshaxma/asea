@@ -6,6 +6,8 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.schemas import ApiErrorDetail, ApiErrorEnvelope
 from app.verification.contract import StaticAnalysisResult, VerificationRequest
+from app.verification.policy import ScoreRequest, ScoreResult
+from app.verification.scoring import score_findings
 from app.verification.static_analysis import InvalidVerificationInput, run_static_analysis
 
 router = APIRouter(prefix="/api/v1/verify", tags=["Verification"])
@@ -33,3 +35,9 @@ def verify_static(body: VerificationRequest, request: Request):
             ),
         )
         return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=envelope.model_dump())
+
+
+@router.post("/score", response_model=ScoreResult)
+def verify_score(body: ScoreRequest):
+    """Deterministic score, verdict and per-finding breakdown for findings under a policy."""
+    return score_findings(body.findings, body.policy)

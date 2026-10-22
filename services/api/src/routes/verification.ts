@@ -1,17 +1,27 @@
 import { Router } from 'express';
 import type { FindingSeverity, VerificationRun } from '@prisma/client';
-import type {
-  AuditChainVerificationResponse,
-  VerificationFindingListResponse,
-  VerificationRunListResponse,
-  VerificationRunResponse,
+import {
+  PolicyConfigSchema,
+  ScoreResultSchema,
+  type AuditChainVerificationResponse,
+  type ScoreBreakdownResponse,
+  type VerificationFindingListResponse,
+  type VerificationRunDetailResponse,
+  type VerificationRunListResponse,
+  type VerificationRunResponse,
 } from '@autonomous-engineer/contracts';
 import { prisma } from '../services/prisma.js';
 import { requireAuth, requireWorkspaceMembership } from '../middlewares/authMiddleware.js';
 import { AppError } from '../middlewares/errorHandler.js';
 import { verifyAuditChain } from '../services/auditChain.js';
-import { VERIFICATION_RESOURCE_TYPE, findingsDigest } from '../services/verification/verificationService.js';
+import {
+  VERIFICATION_RESOURCE_TYPE,
+  findingsDigest,
+  scoreDigest,
+  toVerdictEnum,
+} from '../services/verification/verificationService.js';
 import { verifyRunSeal } from '../services/verification/runSeal.js';
+import { policyConfigHash } from '../services/policy/policyService.js';
 
 export const verificationRouter = Router({ mergeParams: true });
 
@@ -30,10 +40,45 @@ function formatRun(run: VerificationRun & { _count: { findings: number } }): Ver
     status: run.status,
     score: run.score,
     verdict: run.verdict,
+    policyProfileId: run.policyProfileId,
+    policyHash: run.policyHash,
     findingCount: run._count.findings,
     startedAt: run.startedAt?.toISOString(),
     completedAt: run.completedAt?.toISOString(),
     createdAt: run.createdAt.toISOString(),
+  };
+}
+
+function formatScoreBreakdown(stored: unknown): ScoreBreakdownResponse | null {
+  if (stored === null || stored === undefined) return null;
+  const score = ScoreResultSchema.parse(stored);
+  const upper = <T extends string>(value: T) => value.toUpperCase() as Uppercase<T>;
+  return {
+    score: score.score,
+    verdict: toVerdictEnum(score.verdict),
+    rawScore: score.raw_score,
+    totalDeduction: score.total_deduction,
+    policyHash: score.policy_hash,
+    items: score.breakdown.map((item) => ({
+      findingId: item.finding_id,
+      ruleId: item.rule_id,
+      title: item.title,
+      category: upper(item.category),
+      severity: upper(item.severity),
+      source: upper(item.source),
+      severityWeight: item.severity_weight,
+      categoryMultiplier: item.category_multiplier,
+      sourceMultiplier: item.source_multiplier,
+      deduction: item.deduction,
+    })),
+    capsApplied: score.caps_applied.map((cap) => ({
+      id: cap.id,
+      severity: upper(cap.severity),
+      minCount: cap.min_count,
+      count: cap.count,
+      maxScore: cap.max_score,
+      loweredScore: cap.lowered_score,
+    })),
   };
 }
 
@@ -75,7 +120,13 @@ verificationRouter.get(
   requireWorkspaceMembership('MEMBER'),
   async (req, res, next) => {
     try {
-      res.status(200).json(formatRun(await findRunOr404(req.params['workspaceId']!, req.params['runId']!)));
+      const run = await findRunOr404(req.params['workspaceId']!, req.params['runId']!);
+      const body: VerificationRunDetailResponse = {
+        ...formatRun(run),
+        scoreBreakdown: formatScoreBreakdown(run.scoreBreakdown),
+        policySnapshot: run.policySnapshot === null ? null : PolicyConfigSchema.parse(run.policySnapshot),
+      };
+      res.status(200).json(body);
     } catch (err) {
       next(err);
     }
@@ -122,9 +173,32 @@ verificationRouter.get(
 );
 
 /**
+ * True when the stored score, verdict, breakdown and policy snapshot all match
+ * what SCORE_COMPUTED recorded; null until the run has been scored.
+ */
+function verifyStoredScore(
+  run: Pick<VerificationRun, 'score' | 'verdict' | 'scoreBreakdown' | 'policyHash' | 'policySnapshot'>,
+  scored: { metadata: unknown } | undefined
+): boolean | null {
+  if (!scored) return null;
+  const recorded = (scored.metadata ?? {}) as Record<string, unknown>;
+  const snapshot = PolicyConfigSchema.safeParse(run.policySnapshot);
+  return (
+    recorded['score'] === run.score &&
+    recorded['verdict'] === run.verdict &&
+    run.scoreBreakdown !== null &&
+    recorded['scoreDigest'] === scoreDigest(run.scoreBreakdown) &&
+    recorded['policyHash'] === run.policyHash &&
+    snapshot.success &&
+    policyConfigHash(snapshot.data) === run.policyHash
+  );
+}
+
+/**
  * Checks the run's audit hash chain, its seal (terminal runs: detects removed
- * trailing events and edited head/count), and, once static analysis has
- * completed, that the stored findings still match the digest in the chain.
+ * trailing events and edited head/count), once static analysis has completed
+ * that the stored findings still match the digest in the chain, and once the
+ * run is scored that the stored score matches SCORE_COMPUTED.
  */
 verificationRouter.get(
   '/workspaces/:workspaceId/verification-runs/:runId/audit/verify',
@@ -147,10 +221,14 @@ verificationRouter.get(
       }
 
       const seal = verifyRunSeal(run, events, chain);
+      const scoreValid = verifyStoredScore(
+        run,
+        events.find((e) => e.eventType === 'SCORE_COMPUTED')
+      );
 
       const body: AuditChainVerificationResponse = {
         verificationRunId: run.id,
-        valid: chain.valid && seal.valid !== false && findingsDigestValid !== false,
+        valid: chain.valid && seal.valid !== false && findingsDigestValid !== false && scoreValid !== false,
         length: chain.length,
         headHash: chain.valid ? chain.headHash : undefined,
         chain: chain.valid
@@ -158,6 +236,7 @@ verificationRouter.get(
           : { valid: false, brokenEventId: chain.brokenEventId, reason: chain.reason },
         seal,
         findingsDigestValid,
+        scoreValid,
       };
       res.status(200).json(body);
     } catch (err) {

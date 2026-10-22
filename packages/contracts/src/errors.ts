@@ -9,6 +9,7 @@ export const ErrorCodeEnum = z.enum([
   'SERVICE_UNAVAILABLE',
   'UNAUTHORIZED',
   'FORBIDDEN',
+  'CONFLICT',
   'DEPENDENCY_FAILURE',
   'TIMEOUT',
 ]);
