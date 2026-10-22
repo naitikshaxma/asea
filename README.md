@@ -197,6 +197,12 @@ Submit a `VERIFICATION` task (see [docs/development.md](docs/development.md)); t
 - `GET /api/v1/workspaces/:workspaceId/verification-runs/:runId/audit/verify` — Checks the run's audit hash chain, its seal (a terminal run must end with RUN_SEALED matching the head hash and event count stored on the run, so removed trailing events are detected), the findings digest, and that the stored score, verdict, breakdown and policy snapshot match the SCORE_COMPUTED event
 - `GET /api/v1/workspaces/:workspaceId/repositories/:repositoryId/refs` — Local branches (name, commit SHA, subject) to pick `baseSha`/`headSha` from
 
+### GitHub Pull Requests
+Connect a registered checkout to its GitHub repository; pull requests are then verified automatically and the result is posted as a PR comment.
+- `PUT /api/v1/workspaces/:workspaceId/repositories/:repositoryId/github` `{ "fullName": "owner/name" }` (admins) — returns the webhook URL and a new secret (shown once). In GitHub: Settings → Webhooks → Add webhook, content type `application/json`, that secret, event "Pull requests".
+- `DELETE …/github` — disconnects it.
+- `POST /api/v1/webhooks/github` — the webhook. Signed `pull_request` events (opened, synchronize, reopened, ready for review) start a VERIFICATION task with the PR's base and head commits and its title and description as the requirement; bot authors and `ai-generated` labels mark the change as AI-authored. The worker fetches missing PR commits from `origin`, and posts score, verdict and top findings to the PR when `GITHUB_TOKEN` is set.
+
 ### Policy Profiles
 A policy turns findings into a score and verdict (see `packages/contracts/src/policy.ts`). Each workspace gets a `default` profile on first use; its weights are uncalibrated placeholders. A VERIFICATION task may name `verification.policyProfileId`; the run stores a snapshot of that profile's config and its hash, so later edits only affect new runs.
 - `GET|POST /api/v1/workspaces/:workspaceId/policies` — List (members) / create (admins)

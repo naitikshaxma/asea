@@ -9,6 +9,26 @@ import { PolicyConfigSchema } from './policy.js';
 export const VerdictResponseEnum = z.enum(['ALLOW', 'REVIEW', 'HIGH_RISK', 'BLOCK']);
 export type VerdictResponse = z.infer<typeof VerdictResponseEnum>;
 
+// The pull request that triggered a run, and whether its result reached the PR
+export const GithubRunInfoSchema = z.object({
+  repository: z.string(),
+  pullNumber: z.number().int(),
+  pullUrl: z.string().nullable(),
+  // Branch names on GitHub; the worker fetches them if the commits are not in the checkout
+  baseRef: z.string(),
+  headRef: z.string(),
+  deliveryId: z.string(),
+  comment: z
+    .object({
+      status: z.enum(['POSTED', 'FAILED', 'SKIPPED']),
+      url: z.string().nullable(),
+      error: z.string().nullable(),
+      at: z.string(),
+    })
+    .nullable(),
+});
+export type GithubRunInfo = z.infer<typeof GithubRunInfoSchema>;
+
 export const VerificationRunResponseSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
@@ -25,6 +45,7 @@ export const VerificationRunResponseSchema = z.object({
   // submission time (the run keeps that snapshot even if the profile changes)
   policyProfileId: z.string().nullable(),
   policyHash: z.string().nullable(),
+  github: GithubRunInfoSchema.nullable(),
   findingCount: z.number().int(),
   startedAt: IsoTimestampSchema.optional(),
   completedAt: IsoTimestampSchema.optional(),

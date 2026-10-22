@@ -41,6 +41,13 @@ export const EnvSchema = z
     // Per index request; must not exceed the agent service's AGENT_MAX_REQUEST_BYTES
     INDEX_BATCH_BYTES: z.coerce.number().int().positive().default(2 * 1024 * 1024),
 
+    // GitHub: token used to post verification results as pull request comments
+    // (a token with "issues: write"/"pull requests: write"); none = comments skipped
+    GITHUB_TOKEN: z.string().optional(),
+    GITHUB_API_URL: z.string().url().default('https://api.github.com'),
+    // Public URL of the web app, for links in PR comments and the webhook URL shown in the UI
+    PUBLIC_WEB_URL: z.string().url().default('http://localhost:8080'),
+
     // PostgreSQL Configuration
     DATABASE_URL: z.string().optional(),
     POSTGRES_HOST: z.string().default('localhost'),

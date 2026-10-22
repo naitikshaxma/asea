@@ -10,7 +10,7 @@ import { validateTaskTransition, isTaskCancellable } from '../services/workflowS
 import { dispatchPendingOutboxEvents } from '../services/outboxDispatcher.js';
 import { AppError } from '../middlewares/errorHandler.js';
 import { cancelVerificationRunForTask } from '../services/verification/verificationService.js';
-import { resolvePolicyForVerification } from '../services/policy/policyService.js';
+import { submitTask } from '../services/taskSubmission.js';
 
 export const tasksRouter = Router({ mergeParams: true });
 
@@ -74,112 +74,13 @@ tasksRouter.post(
   async (req, res, next) => {
     try {
       const workspaceId = req.params['workspaceId']!;
-      const userId = req.user!.id;
       const validated = TaskSubmissionRequestSchema.parse(req.body);
-
-      // Check Idempotency Key
-      if (validated.idempotencyKey) {
-        const existing = await prisma.task.findFirst({
-          where: {
-            workspaceId,
-            idempotencyKey: validated.idempotencyKey,
-          },
-          include: { runs: true },
-        });
-
-        if (existing) {
-          return res.status(200).json(formatTaskResponse(existing));
-        }
+      const { task, created } = await submitTask(workspaceId, req.user!.id, validated);
+      if (created) {
+        // Dispatch outbox asynchronously
+        dispatchPendingOutboxEvents().catch(() => {});
       }
-
-      // If repositoryId is provided, verify it belongs to this workspace
-      if (validated.repositoryId) {
-        const repo = await prisma.repository.findFirst({
-          where: { id: validated.repositoryId, workspaceId },
-        });
-        if (!repo) {
-          throw new AppError(400, 'BAD_REQUEST', 'Specified repository does not belong to this workspace');
-        }
-      }
-      const verification = validated.taskType === 'VERIFICATION' ? validated.verification : undefined;
-      // Resolved before the transaction: creating the default profile may race with another request
-      const policy = verification
-        ? await resolvePolicyForVerification(prisma, workspaceId, verification.policyProfileId)
-        : undefined;
-
-      // Atomic Transaction: Task + Initial Workflow Run + Outbox Event
-      const task = await prisma.$transaction(async (tx) => {
-        const t = await tx.task.create({
-          data: {
-            workspaceId,
-            creatorId: userId,
-            repositoryId: validated.repositoryId,
-            title: validated.title,
-            description: validated.description,
-            taskType: validated.taskType,
-            priority: validated.priority,
-            status: 'QUEUED',
-            repositoryUrl: validated.repositoryUrl,
-            targetBranch: validated.targetBranch,
-            idempotencyKey: validated.idempotencyKey,
-            executionMetadata: {
-              phase: 'PHASE_2_ENQUEUED',
-              note: 'Persisted in PostgreSQL. Enqueued for BullMQ execution.',
-            },
-          },
-        });
-
-        const run = await tx.workflowRun.create({
-          data: {
-            taskId: t.id,
-            attemptNumber: 1,
-            status: 'QUEUED',
-          },
-        });
-
-        // A VERIFICATION task's inputs live on its VerificationRun; the
-        // description is the requirement the change is verified against, and
-        // the policy is snapshotted so later profile edits don't change the run
-        if (verification && policy) {
-          await tx.verificationRun.create({
-            data: {
-              workspaceId,
-              repositoryId: validated.repositoryId!,
-              taskId: t.id,
-              baseSha: verification.baseSha,
-              headSha: verification.headSha,
-              requirement: validated.description,
-              authorType: verification.authorType,
-              policyProfileId: policy.profileId,
-              policyHash: policy.hash,
-              policySnapshot: policy.config,
-              status: 'QUEUED',
-            },
-          });
-        }
-
-        await tx.outboxEvent.create({
-          data: {
-            aggregateType: 'Task',
-            aggregateId: t.id,
-            eventType: 'TASK_ENQUEUED',
-            payload: {
-              taskId: t.id,
-              workspaceId,
-              attemptNumber: 1,
-              runId: run.id,
-            },
-            status: 'PENDING',
-          },
-        });
-
-        return { ...t, runs: [run] };
-      });
-
-      // Dispatch outbox asynchronously
-      dispatchPendingOutboxEvents().catch(() => {});
-
-      res.status(201).json(formatTaskResponse(task));
+      res.status(created ? 201 : 200).json(formatTaskResponse(task));
     } catch (err) {
       next(err);
     }

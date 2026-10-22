@@ -1,12 +1,38 @@
 import { Router } from 'express';
-import { CreateRepositoryRequestSchema, type RepositoryRefsResponse } from '@autonomous-engineer/contracts';
+import type { Repository } from '@prisma/client';
+import {
+  ConnectGithubRequestSchema,
+  CreateRepositoryRequestSchema,
+  type ConnectGithubResponse,
+  type RepositoryRefsResponse,
+  type RepositoryResponse,
+} from '@autonomous-engineer/contracts';
 import { requireAuth, requireWorkspaceMembership } from '../middlewares/authMiddleware.js';
 import { prisma } from '../services/prisma.js';
 import { AppError } from '../middlewares/errorHandler.js';
 import { resolveRepositoryFsPath } from '../services/intelligence/repositoryAnalysisService.js';
 import { listBranches, VerificationInputError } from '../services/verification/gitDiff.js';
+import { generateWebhookSecret } from '../services/github/webhookSignature.js';
+import { config } from '../config.js';
 
 export const repositoriesRouter = Router({ mergeParams: true });
+
+// The webhook secret is never returned here, only when it is generated
+function formatRepository(r: Repository): RepositoryResponse {
+  return {
+    id: r.id,
+    workspaceId: r.workspaceId,
+    name: r.name,
+    provider: r.provider,
+    repositoryUrl: r.repositoryUrl,
+    defaultBranch: r.defaultBranch,
+    connectionStatus: r.connectionStatus,
+    githubFullName: r.githubFullName,
+    githubWebhookConfigured: r.githubWebhookSecret !== null,
+    createdAt: r.createdAt.toISOString(),
+    updatedAt: r.updatedAt.toISOString(),
+  };
+}
 
 repositoriesRouter.use('/workspaces', requireAuth);
 
@@ -21,17 +47,7 @@ repositoriesRouter.get(
         orderBy: { createdAt: 'desc' },
       });
 
-      const formatted = repositories.map((r) => ({
-        id: r.id,
-        workspaceId: r.workspaceId,
-        name: r.name,
-        provider: r.provider,
-        repositoryUrl: r.repositoryUrl,
-        defaultBranch: r.defaultBranch,
-        connectionStatus: r.connectionStatus,
-        createdAt: r.createdAt.toISOString(),
-        updatedAt: r.updatedAt.toISOString(),
-      }));
+      const formatted = repositories.map(formatRepository);
 
       res.status(200).json({ repositories: formatted, total: formatted.length });
     } catch (err) {
@@ -59,17 +75,7 @@ repositoriesRouter.post(
         },
       });
 
-      res.status(201).json({
-        id: repo.id,
-        workspaceId: repo.workspaceId,
-        name: repo.name,
-        provider: repo.provider,
-        repositoryUrl: repo.repositoryUrl,
-        defaultBranch: repo.defaultBranch,
-        connectionStatus: repo.connectionStatus,
-        createdAt: repo.createdAt.toISOString(),
-        updatedAt: repo.updatedAt.toISOString(),
-      });
+      res.status(201).json(formatRepository(repo));
     } catch (err) {
       next(err);
     }
@@ -93,17 +99,7 @@ repositoriesRouter.get(
         return next(new AppError(404, 'NOT_FOUND', 'Repository record not found'));
       }
 
-      res.status(200).json({
-        id: repo.id,
-        workspaceId: repo.workspaceId,
-        name: repo.name,
-        provider: repo.provider,
-        repositoryUrl: repo.repositoryUrl,
-        defaultBranch: repo.defaultBranch,
-        connectionStatus: repo.connectionStatus,
-        createdAt: repo.createdAt.toISOString(),
-        updatedAt: repo.updatedAt.toISOString(),
-      });
+      res.status(200).json(formatRepository(repo));
     } catch (err) {
       next(err);
     }
@@ -132,6 +128,63 @@ repositoriesRouter.get(
       }
       const body: RepositoryRefsResponse = { repositoryId: repo.id, defaultBranch: repo.defaultBranch, branches };
       res.status(200).json(body);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * Links the checkout to a GitHub repository and generates a new webhook
+ * secret (replacing any previous one). The secret is returned only here: set
+ * it on the GitHub webhook together with the URL.
+ */
+repositoriesRouter.put(
+  '/workspaces/:workspaceId/repositories/:repositoryId/github',
+  requireWorkspaceMembership('ADMIN'),
+  async (req, res, next) => {
+    try {
+      const { workspaceId, repositoryId } = req.params;
+      const { fullName } = ConnectGithubRequestSchema.parse(req.body);
+      const repo = await prisma.repository.findFirst({ where: { id: repositoryId, workspaceId } });
+      if (!repo) {
+        return next(new AppError(404, 'NOT_FOUND', 'Repository record not found'));
+      }
+      const secret = generateWebhookSecret();
+      const updated = await prisma.repository.update({
+        where: { id: repo.id },
+        data: { githubFullName: fullName.toLowerCase(), githubWebhookSecret: secret },
+      });
+      const body: ConnectGithubResponse = {
+        repositoryId: updated.id,
+        githubFullName: updated.githubFullName!,
+        webhookUrl: `${config.PUBLIC_WEB_URL.replace(/\/$/, '')}/api/v1/webhooks/github`,
+        webhookSecret: secret,
+        contentType: 'application/json',
+        events: ['pull_request'],
+      };
+      res.status(200).json(body);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+repositoriesRouter.delete(
+  '/workspaces/:workspaceId/repositories/:repositoryId/github',
+  requireWorkspaceMembership('ADMIN'),
+  async (req, res, next) => {
+    try {
+      const { workspaceId, repositoryId } = req.params;
+      const repo = await prisma.repository.findFirst({ where: { id: repositoryId, workspaceId } });
+      if (!repo) {
+        return next(new AppError(404, 'NOT_FOUND', 'Repository record not found'));
+      }
+      const updated = await prisma.repository.update({
+        where: { id: repo.id },
+        data: { githubFullName: null, githubWebhookSecret: null },
+      });
+      res.status(200).json(formatRepository(updated));
     } catch (err) {
       next(err);
     }

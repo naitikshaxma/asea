@@ -1,4 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
+import os from 'node:os';
 import { promisify } from 'node:util';
 import type { AuthorType, VerificationRequest } from '@autonomous-engineer/contracts';
 
@@ -21,13 +22,14 @@ const SAFE_GIT_CONFIG = [
 
 export class VerificationInputError extends Error {}
 
-async function git(repoPath: string, args: string[]): Promise<string> {
+async function git(repoPath: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
   try {
     const { stdout } = await execFileAsync('git', [...SAFE_GIT_CONFIG, '-C', repoPath, ...args], {
       encoding: 'utf8',
       timeout: GIT_TIMEOUT_MS,
       maxBuffer: GIT_MAX_BUFFER,
       windowsHide: true,
+      env: env ?? process.env,
     });
     return stdout;
   } catch (err: unknown) {
@@ -210,4 +212,73 @@ function catFileBatch(repoPath: string, objects: string[]): Promise<string[]> {
     });
     child.stdin.end(objects.join('\n') + '\n');
   });
+}
+
+// Fetching talks to the network and writes to the repository, so repository
+// config must not run commands then either: no hooks, credential helpers,
+// custom ssh, ext:: transports or upload-pack commands from the checkout.
+const SAFE_FETCH_CONFIG = [
+  '-c', `core.hooksPath=${os.devNull}`,
+  '-c', 'credential.helper=',
+  '-c', 'core.sshCommand=ssh',
+  '-c', 'protocol.ext.allow=never',
+  '-c', 'remote.origin.uploadpack=git-upload-pack',
+];
+
+async function hasCommit(repoPath: string, sha: string): Promise<boolean> {
+  try {
+    await git(repoPath, ['cat-file', '-e', `${sha}^{commit}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Makes sure both commits of a GitHub pull request are in the local checkout,
+ * fetching the PR head (refs/pull/N/head) and the base branch from `origin`
+ * when they are not. With a token, it is sent as an HTTP header through
+ * GIT_CONFIG_* environment variables (not the command line).
+ */
+export async function ensurePullRequestCommits(
+  repoPath: string,
+  pr: { baseSha: string; headSha: string; pullNumber: number; baseRef: string },
+  token?: string
+): Promise<{ fetched: boolean }> {
+  for (const sha of [pr.baseSha, pr.headSha]) {
+    if (!SHA_PATTERN.test(sha)) throw new VerificationInputError(`'${sha}' is not a 7-40 character hex commit SHA`);
+  }
+  if ((await hasCommit(repoPath, pr.baseSha)) && (await hasCommit(repoPath, pr.headSha))) {
+    return { fetched: false };
+  }
+  if (!/^[A-Za-z0-9._/-]{1,200}$/.test(pr.baseRef) || pr.baseRef.includes('..') || pr.baseRef.startsWith('-')) {
+    throw new VerificationInputError(`'${pr.baseRef}' is not a branch name that can be fetched`);
+  }
+  const env = token
+    ? {
+        ...process.env,
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
+        GIT_CONFIG_VALUE_0: `AUTHORIZATION: bearer ${token}`,
+      }
+    : process.env;
+  await git(
+    repoPath,
+    [
+      ...SAFE_FETCH_CONFIG,
+      'fetch',
+      '--no-tags',
+      '--quiet',
+      'origin',
+      `+refs/pull/${pr.pullNumber}/head:refs/asea/pull/${pr.pullNumber}`,
+      `+refs/heads/${pr.baseRef}:refs/remotes/origin/${pr.baseRef}`,
+    ],
+    env
+  );
+  for (const sha of [pr.baseSha, pr.headSha]) {
+    if (!(await hasCommit(repoPath, sha))) {
+      throw new VerificationInputError(`Commit ${sha} of pull request #${pr.pullNumber} is not in origin`);
+    }
+  }
+  return { fetched: true };
 }

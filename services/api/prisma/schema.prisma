@@ -202,6 +202,11 @@ model Repository {
   repositoryUrl    String
   defaultBranch    String               @default("main")
   connectionStatus RepoConnectionStatus @default(CONNECTED)
+  // GitHub repository ("owner/name", lowercase) whose pull requests are
+  // verified against this local checkout, and the secret its webhook signs
+  // deliveries with (see routes/webhooks.ts)
+  githubFullName      String?
+  githubWebhookSecret String?
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt
 
@@ -211,6 +216,7 @@ model Repository {
   verificationRuns VerificationRun[]
 
   @@index([workspaceId])
+  @@index([githubFullName])
 }
 
 model Task {
@@ -241,10 +247,10 @@ model Task {
   verificationRuns  VerificationRun[]
   approvals         Approval[]
 
+  @@unique([workspaceId, idempotencyKey])
   @@index([workspaceId])
   @@index([status])
   @@index([creatorId])
-  @@index([idempotencyKey])
 }
 
 model WorkflowRun {
@@ -421,6 +427,9 @@ model VerificationRun {
   report        Json?
   // LLM provider/model, static tools and whether every agent completed
   engineInfo    Json?
+  // Set when a GitHub pull request triggered the run: repository, number,
+  // URL, delivery id, and the outcome of posting the result as a PR comment
+  github        Json?
   startedAt    DateTime?
   completedAt  DateTime?
   // Seal set when the run reaches a terminal state: the audit chain's head

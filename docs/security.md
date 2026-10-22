@@ -55,6 +55,17 @@ The Autonomous AI Software Engineering Platform is designed on **zero-trust prin
 
 ---
 
+### 3.4 Verification Engine and Untrusted Repository Content
+
+Code, diffs, PR titles/bodies and requirement text under review are untrusted input to the LLM agents. They are sent inside nonce-tagged fences that content cannot close, the system prompt marks them as data, answers must validate against a schema, finding locations are chosen by code (never by the model), deterministic findings cannot be removed or re-graded, and the reporter cannot add findings. Details: `services/agent-service/README.md` (Prompt-injection hardening).
+
+### 3.5 GitHub Webhooks and PR Comments
+
+- `POST /api/v1/webhooks/github` needs no session; it authenticates each delivery with `X-Hub-Signature-256` (HMAC-SHA256 of the exact request bytes) compared in constant time. Every connected repository has its own secret (`PUT /workspaces/:ws/repositories/:id/github`, admins only; returned once, never shown again). A delivery is accepted only for the repositories whose secret signed it, so registering someone else's `owner/name` in another workspace gives nothing. Unknown repositories, missing or wrong signatures get 401; payloads must be JSON.
+- Redeliveries are idempotent: the task's idempotency key (`github:<delivery>:<repository>`) is unique per workspace (B10, now a database constraint).
+- When the PR's commits are not in the local checkout, the worker fetches them from `origin` with repository config neutralised (no hooks, credential helpers, custom ssh, `ext::` or upload-pack commands); `GITHUB_TOKEN` is passed through `GIT_CONFIG_*` environment variables, not the command line.
+- PR comments escape everything taken from the change (no HTML, no @mentions, no table breaks). Their outcome is recorded on the run, outside the sealed audit chain.
+
 ## 4. Repository Intelligence Security & Containment (Phase 3)
 
 The repository intelligence engine executes deep filesystem analysis while strictly defending against malicious repositories, path escapes, credential leaks, and Denial of Service (DoS):

@@ -1,0 +1,25 @@
+# Added to compose.stack.yaml by `npm run e2e`: a fake GitHub API that records
+# the PR comments the worker posts (e2e/github-mock/server.mjs).
+services:
+  github-mock:
+    image: node:24-alpine
+    command: ["node", "/mock/server.mjs"]
+    environment:
+      PORT: "9999"
+      EXPECTED_TOKEN: e2e-github-token
+    volumes:
+      - ./e2e/github-mock:/mock:ro
+    ports:
+      - "127.0.0.1:${E2E_GITHUB_MOCK_PORT:-18099}:9999"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9999/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  worker:
+    environment:
+      GITHUB_TOKEN: e2e-github-token
+      GITHUB_API_URL: http://github-mock:9999
+    depends_on:
+      github-mock: { condition: service_healthy }

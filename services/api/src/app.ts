@@ -13,14 +13,23 @@ import { intelligenceRouter } from './routes/intelligence.js';
 import { tasksRouter } from './routes/tasks.js';
 import { verificationRouter } from './routes/verification.js';
 import { policiesRouter } from './routes/policies.js';
+import { webhooksRouter, type RawBodyRequest } from './routes/webhooks.js';
 import { config, type EnvConfig } from './config.js';
 
 export function createApp(customConfig?: Partial<EnvConfig>): Application {
   const activeConfig = { ...config, ...customConfig };
   const app = express();
 
-  // Basic middleware
-  app.use(express.json({ limit: '10mb' }));
+  // Basic middleware. Webhook signatures are computed over the exact request
+  // bytes, so those are kept for webhook paths (routes/webhooks.ts).
+  app.use(
+    express.json({
+      limit: '10mb',
+      verify: (req, _res, buf) => {
+        if (req.url?.startsWith('/api/v1/webhooks/')) (req as RawBodyRequest).rawBody = Buffer.from(buf);
+      },
+    })
+  );
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   app.use(cookieParser(activeConfig.COOKIE_SECRET));
   app.use(
@@ -49,6 +58,7 @@ export function createApp(customConfig?: Partial<EnvConfig>): Application {
   app.use('/api/v1', tasksRouter);
   app.use('/api/v1', verificationRouter);
   app.use('/api/v1', policiesRouter);
+  app.use('/api/v1', webhooksRouter);
 
   // 404 handler
   app.use(notFoundHandler);

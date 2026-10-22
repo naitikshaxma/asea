@@ -32,11 +32,35 @@ export const RepositoryResponseSchema = z.object({
   repositoryUrl: z.string(),
   defaultBranch: z.string(),
   connectionStatus: RepoConnectionStatusEnum,
+  // GitHub repository whose pull requests are verified against this checkout
+  githubFullName: z.string().nullable(),
+  // A webhook secret exists (the secret itself is only returned when generated)
+  githubWebhookConfigured: z.boolean(),
   createdAt: IsoTimestampSchema,
   updatedAt: IsoTimestampSchema,
 });
 
 export type RepositoryResponse = z.infer<typeof RepositoryResponseSchema>;
+
+// PUT .../repositories/:id/github: link the checkout to a GitHub repository and
+// (re)generate the webhook secret, which is returned only in this response
+export const ConnectGithubRequestSchema = z.object({
+  fullName: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/, 'Use the "owner/name" form of the GitHub repository'),
+});
+export type ConnectGithubRequest = z.infer<typeof ConnectGithubRequestSchema>;
+
+export const ConnectGithubResponseSchema = z.object({
+  repositoryId: z.string(),
+  githubFullName: z.string(),
+  webhookUrl: z.string(),
+  webhookSecret: z.string(),
+  contentType: z.literal('application/json'),
+  events: z.array(z.string()),
+});
+export type ConnectGithubResponse = z.infer<typeof ConnectGithubResponseSchema>;
 
 export const RepositoryListResponseSchema = z.object({
   repositories: z.array(RepositoryResponseSchema),

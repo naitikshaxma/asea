@@ -3,6 +3,7 @@ import type { FindingSeverity, VerificationRun } from '@prisma/client';
 import {
   AgentTimelineEntrySchema,
   EngineInfoSchema,
+  GithubRunInfoSchema,
   PolicyConfigSchema,
   RunReportSchema,
   ScoreResultSchema,
@@ -46,6 +47,7 @@ function formatRun(run: VerificationRun & { _count: { findings: number } }): Ver
     verdict: run.verdict,
     policyProfileId: run.policyProfileId,
     policyHash: run.policyHash,
+    github: run.github === null ? null : GithubRunInfoSchema.parse(run.github),
     findingCount: run._count.findings,
     startedAt: run.startedAt?.toISOString(),
     completedAt: run.completedAt?.toISOString(),

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Prisma, PrismaClient, VerificationFinding, VerificationRun } from '@prisma/client';
 import {
+  GithubRunInfoSchema,
   PolicyConfigSchema,
   type AgentRun,
   type AgentTimelineEntry,
@@ -16,7 +17,7 @@ import { prisma } from '../prisma.js';
 import { config } from '../../config.js';
 import { canonicalJson, chainAuditEvent, verifyAuditChain } from '../auditChain.js';
 import { resolveRepositoryFsPath } from '../intelligence/repositoryAnalysisService.js';
-import { buildVerificationRequest, readTreeFiles, resolveCommit, type TreeFile } from './gitDiff.js';
+import { buildVerificationRequest, ensurePullRequestCommits, readTreeFiles, resolveCommit, type TreeFile } from './gitDiff.js';
 import { getIndexStatus, indexFiles, runPipeline } from './agentClient.js';
 import { RUN_SEALED } from './runSeal.js';
 import { ensureDefaultPolicy, policyConfigHash, toResolvedPolicy, type ResolvedPolicy } from '../policy/policyService.js';
@@ -316,8 +317,19 @@ export async function runVerificationStep(args: {
     const repoPath = resolveRepositoryFsPath(repository.repositoryUrl);
 
     await hooks.started('INDEX_REPOSITORY');
+    // A pull request's commits may not be in the checkout yet
+    const github = run.github === null ? null : GithubRunInfoSchema.parse(run.github);
+    const fetched = github
+      ? (await ensurePullRequestCommits(repoPath, { baseSha: run.baseSha, headSha: run.headSha, pullNumber: github.pullNumber, baseRef: github.baseRef }, config.GITHUB_TOKEN)).fetched
+      : false;
     const index = await ensureRepositoryIndexed(run.repositoryId, repoPath, run.baseSha);
-    await appendVerificationAuditEvent(prisma, run, 'REPOSITORY_INDEXED', { attemptNumber: args.attemptNumber, ...index }, args.actorId);
+    await appendVerificationAuditEvent(
+      prisma,
+      run,
+      'REPOSITORY_INDEXED',
+      { attemptNumber: args.attemptNumber, ...index, ...(github ? { fetchedPullRequest: fetched } : {}) },
+      args.actorId
+    );
     await hooks.finished('INDEX_REPOSITORY', { verificationRunId: run.id, ...index });
 
     await hooks.started('VERIFICATION_PIPELINE');

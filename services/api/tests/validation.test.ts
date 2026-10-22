@@ -3,6 +3,7 @@ import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { prisma } from '../src/services/prisma.js';
 import { generateToken } from '../src/services/authService.js';
+import { Prisma } from '@prisma/client';
 import { DEFAULT_POLICY_CONFIG } from '@autonomous-engineer/contracts';
 import { policyConfigHash } from '../src/services/policy/policyService.js';
 
@@ -199,6 +200,27 @@ describe('API Validation and Task Routes', () => {
       expect(foreign.status).toBe(400);
       expect(tx.verificationRun.create).not.toHaveBeenCalled();
     });
+  });
+
+  it('POST /workspaces/:id/tasks returns the existing task for a reused idempotency key, also when two requests race (B10)', async () => {
+    mockMembership();
+    const now = new Date();
+    const earlier = { id: 'task-earlier', workspaceId, idempotencyKey: 'key-1', title: 't', description: 'd', taskType: 'BUG_INVESTIGATION', priority: 'NORMAL', status: 'QUEUED', createdAt: now, updatedAt: now, runs: [] };
+    // First lookup finds nothing; the create loses the race on the unique key; the second lookup finds the winner
+    const findFirst = vi.spyOn(prisma.task, 'findFirst').mockResolvedValueOnce(null).mockResolvedValueOnce(earlier as any);
+    vi.spyOn(prisma, '$transaction').mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed on (workspaceId, idempotencyKey)', { code: 'P2002', clientVersion: 'test' })
+    );
+
+    const res = await request(app)
+      .post(`/api/v1/workspaces/${workspaceId}/tasks`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ ...validPayload, idempotencyKey: 'key-1' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe('task-earlier');
+    expect(findFirst).toHaveBeenCalledTimes(2);
+    expect(findFirst).toHaveBeenCalledWith({ where: { workspaceId, idempotencyKey: 'key-1' }, include: { runs: true } });
   });
 
   it('POST /workspaces/:id/tasks returns 500 when the database fails instead of faking success', async () => {

@@ -20,6 +20,10 @@ x-api-env: &api-env
   AI_SERVICE_URL: http://agent-service:8000
   INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?run npm run stack:up}
   ALLOWED_REPO_ROOTS: /repos
+  # Links in PR comments and the webhook URL shown in the UI
+  PUBLIC_WEB_URL: http://localhost:${ASEA_WEB_PORT:-8080}
+  # Optional: a token that may comment on pull requests (empty = comments skipped)
+  GITHUB_TOKEN: ${GITHUB_TOKEN:-}
 
 services:
   postgres:

@@ -7,6 +7,7 @@ import { prisma, disconnectPrisma } from './services/prisma.js';
 import { validateTaskTransition, validateRunTransition } from './services/workflowStateMachine.js';
 import { createAndRunAnalysis } from './services/intelligence/repositoryAnalysisService.js';
 import { cancelVerificationRunForTask, runVerificationStep } from './services/verification/verificationService.js';
+import { notifyPullRequestForTask } from './services/github/notify.js';
 import { config } from './config.js';
 import { logger } from './logger.js';
 
@@ -349,6 +350,10 @@ export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
     });
 
     logger.info(`[Worker] Successfully completed task ${taskId} (Run ${runId})`);
+    if (task.taskType === 'VERIFICATION') {
+      // A pull request that triggered the run gets the result as a comment
+      await notifyPullRequestForTask(taskId);
+    }
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     const finishedAt = new Date();
@@ -406,6 +411,9 @@ export async function processTaskJob(job: Job<TaskJobPayload>): Promise<void> {
         },
       },
     });
+    if (task.taskType === 'VERIFICATION') {
+      await notifyPullRequestForTask(taskId, errorMsg);
+    }
 
     throw err; // Allow BullMQ backoff retry
   }

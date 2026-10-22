@@ -11,6 +11,8 @@ import path from 'node:path';
 import { ROOT, compose, ensureEnvFile, stackUp } from '../stack/stack.mjs';
 
 const project = process.env.E2E_PROJECT ?? 'asea-e2e';
+// The e2e stack adds a fake GitHub API for the webhook flow
+process.env.ASEA_COMPOSE_EXTRA = process.env.ASEA_COMPOSE_EXTRA ?? 'compose.e2e.yaml';
 const port = Number(process.env.E2E_PORT ?? 18080);
 const { file: envFile } = ensureEnvFile(project, { port });
 const env = {
@@ -18,6 +20,7 @@ const env = {
   ASEA_BASE_URL: `http://localhost:${port}`,
   ASEA_COMPOSE_PROJECT: project,
   ASEA_COMPOSE_ENV_FILE: envFile,
+  ASEA_GITHUB_MOCK_URL: `http://localhost:${process.env.E2E_GITHUB_MOCK_PORT ?? 18099}`,
 };
 
 function run(label, command, args, cwd = ROOT) {

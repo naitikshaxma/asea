@@ -17,6 +17,12 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 export const COMPOSE_FILE = path.join(ROOT, 'compose.stack.yaml');
 const SECRETS = ['POSTGRES_PASSWORD', 'JWT_SECRET', 'COOKIE_SECRET', 'INTERNAL_SERVICE_TOKEN'];
 
+/** compose.stack.yaml plus any extra files listed in ASEA_COMPOSE_EXTRA (comma-separated, relative to the root). */
+export function composeFiles() {
+  const extra = (process.env.ASEA_COMPOSE_EXTRA ?? '').split(',').map((f) => f.trim()).filter(Boolean);
+  return [COMPOSE_FILE, ...extra.map((f) => path.join(ROOT, f))];
+}
+
 function readEnvFile(file) {
   if (!fs.existsSync(file)) return {};
   return Object.fromEntries(
@@ -46,7 +52,7 @@ export function compose(project, args, { capture = false, input } = {}) {
   const { file } = ensureEnvFile(project);
   const result = spawnSync(
     'docker',
-    ['compose', '-p', project, '-f', COMPOSE_FILE, '--env-file', file, ...args],
+    ['compose', '-p', project, ...composeFiles().flatMap((f) => ['-f', f]), '--env-file', file, ...args],
     { cwd: ROOT, stdio: capture ? ['pipe', 'pipe', 'inherit'] : 'inherit', encoding: 'utf8', input }
   );
   if (capture) {

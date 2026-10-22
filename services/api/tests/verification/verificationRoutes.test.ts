@@ -71,6 +71,7 @@ describe('Verification run routes', () => {
       toolsUnavailable: ['semgrep'],
       semgrepRulesetSha256: null,
     } as unknown,
+    github: null as unknown,
     startedAt: new Date('2026-10-21T10:00:00Z'),
     completedAt: new Date('2026-10-21T10:00:05Z'),
     createdAt: new Date('2026-10-21T09:59:59Z'),

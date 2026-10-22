@@ -331,6 +331,8 @@ describe('Web Application Dashboard Shell', () => {
           provider: 'LOCAL',
           defaultBranch: 'main',
           connectionStatus: 'CONNECTED',
+          githubFullName: null,
+          githubWebhookConfigured: false,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         },

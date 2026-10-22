@@ -21,13 +21,16 @@ vi.mock('../../src/services/verification/gitDiff.js', () => ({
   buildVerificationRequest: vi.fn(),
   readTreeFiles: vi.fn(),
   resolveCommit: vi.fn(),
+  ensurePullRequestCommits: vi.fn(),
 }));
+vi.mock('../../src/services/github/githubClient.js', () => ({ postPullRequestComment: vi.fn() }));
 
 import { prisma } from '../../src/services/prisma.js';
 import { config } from '../../src/config.js';
 import { processTaskJob } from '../../src/worker.js';
 import { getIndexStatus, indexFiles, runPipeline } from '../../src/services/verification/agentClient.js';
-import { buildVerificationRequest, readTreeFiles, resolveCommit } from '../../src/services/verification/gitDiff.js';
+import { buildVerificationRequest, ensurePullRequestCommits, readTreeFiles, resolveCommit } from '../../src/services/verification/gitDiff.js';
+import { postPullRequestComment } from '../../src/services/github/githubClient.js';
 import { verifyAuditChain } from '../../src/services/auditChain.js';
 import { findingsDigest, reportDigest, scoreDigest } from '../../src/services/verification/verificationService.js';
 import { verifyRunSeal } from '../../src/services/verification/runSeal.js';
@@ -202,6 +205,7 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
       agentTimeline: null,
       report: null,
       engineInfo: null,
+      github: null,
       startedAt: null,
       completedAt: null,
       auditHeadHash: null,
@@ -242,7 +246,6 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
       return step;
     }) as any);
     vi.spyOn(prisma.repository, 'findFirstOrThrow').mockResolvedValue({ id: 'repo-v', workspaceId, repositoryUrl: repoDir } as any);
-    vi.spyOn(prisma.verificationRun, 'findFirst').mockImplementation((async () => ({ ...verificationRun })) as any);
     vi.spyOn(prisma.verificationRun, 'update').mockImplementation((async ({ data }: any) => {
       if (data.agentTimeline && verificationRun.status === 'RUNNING' && data.status === undefined) {
         timelineWrites.push(structuredClone(data.agentTimeline));
@@ -266,6 +269,10 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
     vi.spyOn(prisma, '$transaction').mockImplementation((async (fn: any) => fn(prisma)) as any);
 
     vi.mocked(resolveCommit).mockReset().mockResolvedValue(BASE);
+    vi.mocked(ensurePullRequestCommits).mockReset().mockResolvedValue({ fetched: true });
+    vi.mocked(postPullRequestComment).mockReset().mockResolvedValue({ url: 'https://github.com/acme/app/pull/7#issuecomment-1' });
+    vi.spyOn(prisma.verificationRun, 'findFirst').mockImplementation((async (args: any) =>
+      args?.include ? { ...verificationRun, findings: findingRows, policyProfile: { name: 'default' } } : { ...verificationRun }) as any);
     vi.mocked(buildVerificationRequest).mockReset().mockResolvedValue(builtRequest);
     vi.mocked(getIndexStatus).mockReset().mockResolvedValue({ repository_id: 'repo-v', commit_sha: BASE, indexed: false, symbols: 0 });
     vi.mocked(readTreeFiles).mockReset().mockResolvedValue({
@@ -398,6 +405,79 @@ describe('VERIFICATION tasks in the worker (agent service mocked)', () => {
     expect(verificationRun.auditEventCount).toBe(8);
     expect(event('RUN_SEALED').metadata).toEqual({ status: 'COMPLETED', auditHeadHash: completedEvent.hash, auditEventCount: 8 });
     expect(verifyRunSeal(verificationRun as any, chain() as any, verified)).toEqual({ required: true, valid: true });
+  });
+
+  describe('runs triggered by a GitHub pull request', () => {
+    const github = {
+      repository: 'acme/app',
+      pullNumber: 7,
+      pullUrl: 'https://github.com/acme/app/pull/7',
+      baseRef: 'main',
+      headRef: 'feature/export',
+      deliveryId: 'delivery-1',
+      comment: null,
+    };
+    const originalToken = config.GITHUB_TOKEN;
+
+    beforeEach(() => {
+      verificationRun.github = { ...github };
+      config.GITHUB_TOKEN = 'ghp_test';
+    });
+    afterEach(() => {
+      config.GITHUB_TOKEN = originalToken;
+    });
+
+    it('fetches the PR commits, verifies, and posts the result on the pull request', async () => {
+      await processTaskJob(job(0));
+
+      expect(vi.mocked(ensurePullRequestCommits)).toHaveBeenCalledWith(
+        fs.realpathSync(repoDir),
+        { baseSha: BASE, headSha: 'b'.repeat(40), pullNumber: 7, baseRef: 'main' },
+        'ghp_test'
+      );
+      expect(event('REPOSITORY_INDEXED').metadata).toMatchObject({ fetchedPullRequest: true });
+      const [repository, number, body] = vi.mocked(postPullRequestComment).mock.calls[0]!;
+      expect([repository, number]).toEqual(['acme/app', 7]);
+      expect(body).toContain('🟠 HIGH RISK · score 50/100');
+      expect(body).toContain('| HIGH | Route handler has no authentication decorator | `routes/projects.py:25` |');
+      expect(verificationRun.github.comment).toMatchObject({ status: 'POSTED', url: 'https://github.com/acme/app/pull/7#issuecomment-1', error: null });
+      // The comment is a notification outside the sealed chain
+      expect(eventTypes()).toEqual(COMPLETED_EVENTS);
+    });
+
+    it('records a failed comment without failing the task', async () => {
+      vi.mocked(postPullRequestComment).mockRejectedValue(new Error('GitHub returned 403: Resource not accessible'));
+      await processTaskJob(job(0));
+      expect(task.status).toBe('COMPLETED');
+      expect(verificationRun.github.comment).toMatchObject({ status: 'FAILED', error: 'GitHub returned 403: Resource not accessible' });
+    });
+
+    it('skips the comment when no GitHub token is configured', async () => {
+      config.GITHUB_TOKEN = undefined;
+      await processTaskJob(job(0));
+      expect(vi.mocked(postPullRequestComment)).not.toHaveBeenCalled();
+      expect(verificationRun.github.comment).toMatchObject({ status: 'SKIPPED', error: 'GITHUB_TOKEN is not configured' });
+    });
+
+    it('reports a failed verification on the pull request', async () => {
+      task.status = 'RUNNING';
+      runs.get('run-v-1')!.status = 'FAILED';
+      vi.mocked(ensurePullRequestCommits).mockRejectedValue(new Error('Commit bbbbbbb of pull request #7 is not in origin'));
+
+      await expect(processTaskJob(job(2))).rejects.toThrow('is not in origin');
+      expect(verificationRun.status).toBe('FAILED');
+      const body = vi.mocked(postPullRequestComment).mock.calls[0]![2];
+      expect(body).toContain('## ⚠️ ASEA verification failed');
+      expect(body).toContain('is not in origin');
+      expect(verificationRun.github.comment.status).toBe('POSTED');
+    });
+  });
+
+  it('does not touch GitHub for runs without a pull request', async () => {
+    await processTaskJob(job(0));
+    expect(vi.mocked(ensurePullRequestCommits)).not.toHaveBeenCalled();
+    expect(vi.mocked(postPullRequestComment)).not.toHaveBeenCalled();
+    expect(event('REPOSITORY_INDEXED').metadata).not.toHaveProperty('fetchedPullRequest');
   });
 
   it('does not send the files again when the commit is already indexed', async () => {

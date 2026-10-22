@@ -145,7 +145,7 @@ export function psql(sql: string): string {
   const envFile = process.env['ASEA_COMPOSE_ENV_FILE'] ?? path.join(ROOT, '.asea', `${project}.env`);
   const result = spawnSync(
     'docker',
-    ['compose', '-p', project, '-f', path.join(ROOT, 'compose.stack.yaml'), '--env-file', envFile,
+    ['compose', '-p', project, '-f', path.join(ROOT, 'compose.stack.yaml'), '-f', path.join(ROOT, 'compose.e2e.yaml'), '--env-file', envFile,
       'exec', '-T', 'postgres', 'psql', '-U', 'asea', '-d', 'asea', '-v', 'ON_ERROR_STOP=1', '-At', '-c', sql],
     { encoding: 'utf8' }
   );
