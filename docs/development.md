@@ -76,6 +76,17 @@ For the workspace installation picker, approved-patch PR publisher, and CI sync:
 4. Keep the App private key, client secret, webhook secret, App JWTs, installation tokens, and user access tokens on the API server. The OAuth callback code is exchanged server-side; the user access token is held only in memory while the API verifies `GET /user/installations` and is not persisted.
 5. Link an installation under **Settings → GitHub App**, then choose an App-accessible repository from the repository page. The existing local checkout remains the source snapshot for patch generation.
 
+Steps 1–3 can be automated with GitHub's manifest flow: `node scripts/github/create-app.mjs [--web-url <PUBLIC_WEB_URL>] [--webhook-url https://<public-host>/api/v1/webhooks/github]` serves a local page that submits the App manifest (private App, the permissions above, `request_oauth_on_install`, callback `<PUBLIC_WEB_URL>/settings`). You confirm **Create GitHub App** on github.com, and the helper writes the six `GITHUB_APP_*` values and `PUBLIC_WEB_URL` to `.asea/github-app.env` (git-ignored, mode 0600, never printed). It refuses to overwrite an existing file. The OAuth callback works with `http://localhost:5173/settings` because it runs in your browser. Webhook delivery needs a public HTTPS URL. Without `--webhook-url` the App is created with its webhook inactive and no event subscriptions, and the file holds a generated webhook secret to enter in the App settings once you add a public webhook URL and the events from step 2.
+
+`npm run live:github-app` verifies the App against the real GitHub API using that file. It uses tmpfs PostgreSQL/Redis containers created for the run, and the API, worker, agent service (deterministic `fake` provider) and web dev server on this host, on `:4000`/`:5173`. You sign in with the account it writes to its run directory and install the App from **Settings → GitHub App**, selecting only the target repository (`ASEA_LIVE_REPO`, default `naitikshaxma/asea`). It then checks:
+- App JWT authentication and the installation's repository scope;
+- repository linking, and refusal of a repository outside the installation;
+- that publishing a blocked patch returns 409 and writes nothing;
+- branch, commit and PR creation through the App;
+- CI-status reading for the PR head.
+
+It closes the PR unmerged and deletes the branch it created. Webhook signature and duplicate-delivery checks stay with the mocked tests until a public webhook URL is configured.
+
 The publisher requires a clean source revision, matching remote base SHA and changed-file hashes, a current second-person approval, and `PASSED` test, security, and independent-review statuses. The Docker sandbox has been live-verified; live GitHub/LLM credentials remain unavailable, so no real publication was run. See [API_REFERENCE.md](API_REFERENCE.md#github-app-and-pr-lifecycle) and [security.md](security.md).
 
 ### Step 2: Install Node Monorepo Dependencies

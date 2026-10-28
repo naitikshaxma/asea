@@ -39,6 +39,7 @@
     "stack:logs": "node scripts/stack/stack.mjs logs",
     "e2e": "node scripts/e2e/run.mjs",
     "live:code-patch": "node scripts/live/code-patch-sandbox.mjs",
+    "live:github-app": "tsx scripts/live/github-app.ts",
     "clean": "npm run clean --workspaces --if-present"
   },
   "devDependencies": {

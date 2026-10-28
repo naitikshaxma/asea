@@ -401,3 +401,19 @@ Existing staged, unstaged, and untracked changes were preserved; nothing was sta
 - **CI:** the first GitHub Actions run on the published `main` (commit `9456974`, [run 40750736177](https://github.com/naitikshaxma/asea/actions/runs/40750736177)) completed `success` on all four jobs: TypeScript/API/web, Python agent service, Prisma migrations with a drift check, and Compose validation.
 - **Live run with the schema-drift check:** `npm run live:code-patch` passed **17/17**. The new drift check (`prisma migrate diff` against the run's own migrated tmpfs PostgreSQL, `--exit-code`) passed. The run's containers and directory were removed afterwards.
 - **GitHub App: not verified live, blocked.** No App credentials are configured (no `.env`, no `GITHUB_APP_*` variables), the repository has no webhooks, and there is no public HTTPS endpoint for the App's webhook and OAuth callback. The CLI's OAuth token cannot list App installations, so whether an App already exists under the account must be checked at github.com/settings/apps. No App, installation, branch, or PR was created. Installation access, repository association, publication, webhook signatures, duplicate deliveries, and CI-status sync remain covered only by the mocked API tests and the E2E GitHub mock.
+
+## Live GitHub App verification — 2026-10-29
+
+This supersedes the "GitHub App: not verified live" note above.
+
+- **App:** private GitHub App `asea-naitikshaxma` (id 5515715), created with `scripts/github/create-app.mjs` through GitHub's manifest flow. It has the documented permissions (contents write, pull requests write, checks/statuses/metadata read) and `request_oauth_on_install`, with callback `http://localhost:5173/settings`. Its credentials are in the git-ignored `.asea/github-app.env` and were never printed. The webhook is **inactive** because there is no public HTTPS endpoint.
+- **`npm run live:github-app`: 11/11 live checks** against the real GitHub API, with the local API/worker/web/agent service on tmpfs PostgreSQL/Redis containers created for the run:
+  - App JWT authentication (`GET /app`).
+  - Installation linked through the real OAuth install callback in the ASEA Settings page.
+  - Installation and installation token limited to `naitikshaxma/asea` (1 repository).
+  - Repository linking accepted (200); a repository outside the installation was refused (403).
+  - Publishing a blocked `CODE_PATCH` patch returned 409 and created no branch.
+  - App-created branch, commit and pull request: [PR #1](https://github.com/naitikshaxma/asea/pull/1).
+  - CI status read for the PR head: `SUCCESS`, 5 checks.
+  - Cleanup: PR #1 closed unmerged and its branch deleted, both confirmed with `gh`.
+- **Not verified live:** webhook delivery, signature validation of real deliveries, duplicate-delivery handling, and webhook-driven CI updates. They need a public HTTPS webhook URL. They remain covered by the mocked API tests and the E2E GitHub mock.
