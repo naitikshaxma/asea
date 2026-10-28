@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 
-def test_analyze_valid_input(client: TestClient):
+def test_analyze_placeholder_is_explicitly_unavailable(client: TestClient):
     payload = {
         "taskId": "task-test-101",
         "taskType": "BUG_INVESTIGATION",
@@ -10,15 +10,11 @@ def test_analyze_valid_input(client: TestClient):
         "targetBranch": "main",
     }
     response = client.post("/api/v1/analyze", json=payload)
-    assert response.status_code == 200
-
+    assert response.status_code == 501
     data = response.json()
-    assert data["taskId"] == "task-test-101"
-    assert data["status"] == "READY_FOR_TRIAGE"
-    assert isinstance(data["insights"], list)
-    assert len(data["insights"]) > 0
-    assert data["confidence"] == 1.0
-    assert "phaseNote" in data
+    assert data["success"] is False
+    assert data["error"]["code"] == "NOT_IMPLEMENTED"
+    assert "not implemented" in data["error"]["message"]
 
 
 def test_analyze_invalid_input_short_query(client: TestClient):

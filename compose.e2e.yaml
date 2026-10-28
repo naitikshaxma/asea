@@ -1,6 +1,12 @@
 # Added to compose.stack.yaml by `npm run e2e`: a fake GitHub API that records
 # the PR comments the worker posts (e2e/github-mock/server.mjs).
 services:
+  # The E2E stack explicitly uses the deterministic stand-in. This is test
+  # infrastructure, not the default behavior of a keyless application stack.
+  agent-service:
+    environment:
+      LLM_PROVIDER: fake
+
   github-mock:
     image: node:24-alpine
     command: ["node", "/mock/server.mjs"]
@@ -16,6 +22,13 @@ services:
       interval: 2s
       timeout: 5s
       retries: 30
+
+  api:
+    environment:
+      GITHUB_TOKEN: e2e-github-token
+      # E2E suites share one client IP and register in parallel; auth throttling
+      # is covered by API unit tests, so keep it from masking unrelated flows.
+      AUTH_RATE_LIMIT_MAX: "100"
 
   worker:
     environment:

@@ -43,7 +43,11 @@ if (process.env.E2E_SKIP_UP !== '1') {
   }
 }
 
-const suites = [['API e2e (Vitest)', 'npx', ['vitest', 'run', '--config', 'vitest.config.ts']]];
+const suites = [
+  ['API e2e (Vitest)', 'npx', ['vitest', 'run', '--config', 'vitest.config.ts']],
+  // Needs a Playwright Chromium build (`npx playwright install chromium`)
+  ['UI e2e (Playwright)', 'npx', ['playwright', 'test', '--config', 'playwright.config.ts']],
+];
 if (status === 0) {
   for (const [label, command, args] of suites) {
     status = run(label, command, args, path.join(ROOT, 'e2e')) || status;
@@ -52,7 +56,8 @@ if (status === 0) {
 }
 
 if (process.env.E2E_KEEP_STACK === '1') {
-  console.log(`\nStack left running: http://localhost:${port} (stop with: node scripts/stack/stack.mjs down --project ${project} --volumes)`);
+  // The extra compose file must be included, or its services (the GitHub mock) keep running
+  console.log(`\nStack left running: http://localhost:${port} (stop with: ASEA_COMPOSE_EXTRA=${process.env.ASEA_COMPOSE_EXTRA} node scripts/stack/stack.mjs down --project ${project} --volumes)`);
 } else if (process.env.E2E_SKIP_UP !== '1') {
   compose(project, ['down', '-v', '--remove-orphans']);
 }

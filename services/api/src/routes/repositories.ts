@@ -29,6 +29,7 @@ function formatRepository(r: Repository): RepositoryResponse {
     connectionStatus: r.connectionStatus,
     githubFullName: r.githubFullName,
     githubWebhookConfigured: r.githubWebhookSecret !== null,
+    githubAppConnected: r.githubAppInstallationId !== null,
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   };
@@ -182,7 +183,7 @@ repositoriesRouter.delete(
       }
       const updated = await prisma.repository.update({
         where: { id: repo.id },
-        data: { githubFullName: null, githubWebhookSecret: null },
+        data: { githubFullName: repo.githubAppInstallationId ? repo.githubFullName : null, githubWebhookSecret: null },
       });
       res.status(200).json(formatRepository(updated));
     } catch (err) {

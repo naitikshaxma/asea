@@ -36,9 +36,11 @@ export class ApiClient {
   cookie: string | undefined;
 
   async request<T = any>(method: string, url: string, body?: unknown, headers: Record<string, string> = {}): Promise<ApiResponse<T>> {
+    const unsafeMethod = !['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase());
     const res = await fetch(`${BASE_URL}${url}`, {
       method,
       headers: {
+        ...(unsafeMethod ? { Origin: new URL(BASE_URL).origin } : {}),
         ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
         ...(this.cookie ? { Cookie: this.cookie } : {}),
         ...headers,

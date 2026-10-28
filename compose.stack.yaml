@@ -16,10 +16,17 @@ x-api-env: &api-env
   REDIS_URL: redis://redis:6379
   JWT_SECRET: ${JWT_SECRET:?run npm run stack:up}
   COOKIE_SECRET: ${COOKIE_SECRET:?run npm run stack:up}
+  AUTH_STATE_STORE: ${AUTH_STATE_STORE:-redis}
+  AUTH_STATE_KEY_PREFIX: ${AUTH_STATE_KEY_PREFIX:-asea}
+  AUTH_RATE_LIMIT_WINDOW_MS: ${AUTH_RATE_LIMIT_WINDOW_MS:-900000}
+  AUTH_RATE_LIMIT_MAX: ${AUTH_RATE_LIMIT_MAX:-5}
   CORS_ORIGIN: http://localhost:${ASEA_WEB_PORT:-8080}
   AI_SERVICE_URL: http://agent-service:8000
   INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?run npm run stack:up}
   ALLOWED_REPO_ROOTS: /repos
+  TASK_WORKSPACE_ROOT: /task-workspaces
+  # Repository code cannot access a Docker daemon from the application stack.
+  SANDBOX_PROVIDER: unavailable
   # Links in PR comments and the webhook URL shown in the UI
   PUBLIC_WEB_URL: http://localhost:${ASEA_WEB_PORT:-8080}
   # Optional: a token that may comment on pull requests (empty = comments skipped)
@@ -69,10 +76,14 @@ services:
     environment:
       ENVIRONMENT: production
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?run npm run stack:up}
-      # fake = deterministic agents, no API key; anthropic needs LLM_API_KEY
-      LLM_PROVIDER: ${LLM_PROVIDER:-fake}
+      # Without a usable provider/key the service skips LLM stages. Select
+      # fake explicitly for deterministic tests; it is not a live AI provider.
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
       LLM_API_KEY: ${LLM_API_KEY:-}
       MODEL_NAME: ${MODEL_NAME:-}
+      REVIEW_LLM_PROVIDER: ${REVIEW_LLM_PROVIDER:-}
+      REVIEW_LLM_API_KEY: ${REVIEW_LLM_API_KEY:-}
+      REVIEW_MODEL_NAME: ${REVIEW_MODEL_NAME:-}
       QDRANT_URL: http://qdrant:6333
     depends_on:
       qdrant: { condition: service_healthy }
@@ -117,6 +128,7 @@ services:
     environment: *api-env
     volumes:
       - repos:/repos
+      - taskworkspaces:/task-workspaces
     depends_on:
       api: { condition: service_healthy }
       agent-service: { condition: service_healthy }
@@ -140,3 +152,4 @@ volumes:
   redisdata:
   qdrantdata:
   repos:
+  taskworkspaces:

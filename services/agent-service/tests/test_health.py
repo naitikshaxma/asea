@@ -13,7 +13,10 @@ def test_health_endpoint(client: TestClient):
     assert "timestamp" in data
 
 
-def test_readiness_endpoint(client: TestClient):
+def test_readiness_endpoint(client: TestClient, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "fake")
     response = client.get("/ready")
     assert response.status_code == 200
     data = response.json()

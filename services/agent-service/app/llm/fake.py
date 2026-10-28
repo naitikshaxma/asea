@@ -30,6 +30,8 @@ RESPONSIBILITY_RULES: list[tuple[str, str, str, str, list[str]]] = [
 
 AUTH_LIKE = re.compile(r"login|auth|permission|require", re.IGNORECASE)
 SEVERITY_ORDER = ("critical", "high", "medium", "low")
+PATCH_MARKER_SUMMARY = "Deterministic E2E proposal; adds a test marker comment only."
+PATCH_MARKER_LINES = ("// ASEA deterministic test proposal", "# ASEA deterministic test proposal")
 
 
 class FakeLLMProvider:
@@ -101,4 +103,51 @@ class FakeLLMProvider:
                 }
                 for f in findings
             ],
+        }
+
+    def _engineering_propose_patch(self, meta: dict[str, Any]) -> dict[str, Any]:
+        """Create a conspicuous, deterministic patch for isolated E2E coverage only."""
+        files = meta.get("files", [])
+        supported = (".py", ".ts", ".tsx", ".js", ".jsx", ".md", ".sh")
+        source = next((item for item in files if item.get("path", "").lower().endswith(supported)), None)
+        if not source:
+            raise LLMError("fake patch provider needs a supported text file", retryable=False)
+
+        file_path = source["path"]
+        content = source["content"]
+        evidence_line = next((line.strip() for line in content.splitlines() if line.strip()), "Empty source file")[:200]
+        comment = "# ASEA deterministic test proposal" if file_path.lower().endswith((".py", ".sh")) else "// ASEA deterministic test proposal"
+        lines = content.splitlines()
+        if not lines:
+            hunk = "@@ -0,0 +1 @@\n+" + comment
+        else:
+            line_number = len(lines)
+            hunk = f"@@ -{line_number},1 +{line_number},2 @@\n {lines[-1]}\n+{comment}"
+        return {
+            "summary": PATCH_MARKER_SUMMARY,
+            "plan": ["Select one bounded source file", "Add the deterministic marker in the disposable snapshot"],
+            "evidence": [f"{file_path}:1 — supplied context begins with `{evidence_line}`."],
+            "unified_diff": f"--- a/{file_path}\n+++ b/{file_path}\n{hunk}\n",
+        }
+
+    def _engineering_review_patch(self, meta: dict[str, Any]) -> dict[str, Any]:
+        """Approve only the fake proposer's marker-only diff; request changes for anything else.
+
+        This keeps the test reviewer from ever approving a real code change.
+        """
+        lines = meta["unified_diff"].splitlines()
+        added = [line[1:] for line in lines if line.startswith("+") and not line.startswith("+++")]
+        removed = [line for line in lines if line.startswith("-") and not line.startswith("---")]
+        if added and not removed and all(line in PATCH_MARKER_LINES for line in added):
+            return {"verdict": "APPROVE", "summary": "Deterministic E2E review: the patch only adds the test marker comment.", "findings": []}
+        path = next((line[6:] for line in lines if line.startswith("+++ b/")), None)
+        evidence = (added or removed or ["(empty diff)"])[0][:200] or "(blank line)"
+        return {
+            "verdict": "REQUEST_CHANGES",
+            "summary": "The deterministic test reviewer approves only the fake proposer's marker comment.",
+            "findings": [{
+                "id": "fake-reviewer-unrecognised-change", "severity": "high", "path": path, "line": None,
+                "message": "Only the deterministic marker comment can be approved by the test reviewer.",
+                "evidence": evidence,
+            }],
         }

@@ -24,12 +24,12 @@
     "build:api": "npm run build --workspace=@autonomous-engineer/api",
     "build:web": "npm run build --workspace=@autonomous-engineer/web",
     "test": "npm run test:api && npm run test:web",
-    "test:api": "npm run test --workspace=@autonomous-engineer/api",
-    "test:web": "npm run test --workspace=@autonomous-engineer/web",
+    "test:api": "npm run build:contracts && npm run test --workspace=@autonomous-engineer/api",
+    "test:web": "npm run build:contracts && npm run test --workspace=@autonomous-engineer/web",
     "test:python": "node scripts/run-python-tests.js",
     "semgrep:rules": "node scripts/run-python.js services/agent-service/scripts/fetch_semgrep_rules.py",
     "test:all": "npm run test && npm run test:python",
-    "typecheck": "npm run typecheck --workspaces --if-present",
+    "typecheck": "npm run build:contracts && npm run typecheck --workspaces --if-present",
     "lint": "npm run typecheck",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
@@ -38,6 +38,7 @@
     "stack:down": "node scripts/stack/stack.mjs down",
     "stack:logs": "node scripts/stack/stack.mjs logs",
     "e2e": "node scripts/e2e/run.mjs",
+    "live:code-patch": "node scripts/live/code-patch-sandbox.mjs",
     "clean": "npm run clean --workspaces --if-present"
   },
   "devDependencies": {

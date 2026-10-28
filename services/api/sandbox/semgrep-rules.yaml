@@ -1,0 +1,27 @@
+rules:
+  - id: asea-hard-coded-credential-assignment
+    languages: [javascript, typescript, python, go, java]
+    severity: ERROR
+    message: Possible hard-coded credential assignment.
+    metadata:
+      category: security
+      confidence: MEDIUM
+    pattern-regex: (?i)(?:password|passwd|secret|api[_-]?key|access[_-]?token)\s*[:=]\s*["'][^"']{8,}["']
+
+  - id: asea-disabled-tls-verification
+    languages: [javascript, typescript, python]
+    severity: ERROR
+    message: TLS certificate verification appears to be disabled.
+    metadata:
+      category: security
+      confidence: MEDIUM
+    pattern-regex: (?i)(verify\s*=\s*False|rejectUnauthorized\s*:\s*false|NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*["']0["'])
+
+  - id: asea-dangerous-eval
+    languages: [javascript, typescript, python]
+    severity: WARNING
+    message: Dynamic code evaluation requires careful review.
+    metadata:
+      category: security
+      confidence: LOW
+    pattern-regex: (\beval\s*\(|new\s+Function\s*\()

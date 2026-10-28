@@ -12,6 +12,10 @@ export const TaskTypeEnum = z.enum([
 
 export type TaskType = z.infer<typeof TaskTypeEnum>;
 
+// Only these task types have a worker workflow; the others stay in the enum
+// so stored tasks remain readable, but new ones are rejected at submission.
+export const SUBMITTABLE_TASK_TYPES: readonly TaskType[] = ['CODE_PATCH', 'VERIFICATION'];
+
 export const TaskPriorityEnum = z.enum(['LOW', 'NORMAL', 'HIGH', 'URGENT']);
 export type TaskPriority = z.infer<typeof TaskPriorityEnum>;
 
@@ -54,8 +58,12 @@ export const WorkflowStepTypeEnum = z.enum([
   'VALIDATE_CONTEXT',
   'INSPECT_REPOSITORY',
   'GENERATE_SPEC',
+  'GENERATE_PATCH',
+  'APPLY_PATCH',
   'VERIFY_BOUNDARIES',
   'SIMULATE_EXECUTION',
+  'EXECUTE_TESTS',
+  'REQUEST_APPROVAL',
   'STATIC_ANALYSIS',
   'INDEX_REPOSITORY',
   'VERIFICATION_PIPELINE',
@@ -113,7 +121,7 @@ export const TaskSubmissionRequestSchema = z.object({
     .string()
     .min(10, 'Description must be at least 10 characters')
     .max(5000, 'Description cannot exceed 5000 characters'),
-  taskType: TaskTypeEnum.default('BUG_INVESTIGATION'),
+  taskType: TaskTypeEnum,
   priority: TaskPriorityEnum.default('NORMAL'),
   repositoryUrl: z
     .string()
@@ -127,6 +135,16 @@ export const TaskSubmissionRequestSchema = z.object({
   idempotencyKey: z.string().max(128).optional(),
   verification: VerificationTaskInputSchema.optional(),
 }).superRefine((task, ctx) => {
+  if (!SUBMITTABLE_TASK_TYPES.includes(task.taskType)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['taskType'],
+      message: `${task.taskType} tasks have no workflow yet; submit one of ${SUBMITTABLE_TASK_TYPES.join(', ')}`,
+    });
+  }
+  if (task.taskType === 'CODE_PATCH' && !task.repositoryId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['repositoryId'], message: 'Required for CODE_PATCH tasks' });
+  }
   if (task.taskType === 'VERIFICATION') {
     if (!task.repositoryId) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['repositoryId'], message: 'Required for VERIFICATION tasks' });
@@ -166,6 +184,12 @@ export const TaskResponseSchema = z.object({
       sandboxType: z.string().optional(),
       phase: z.string().optional(),
       note: z.string().optional(),
+      patchHash: z.string().optional(),
+      patchStatus: z.string().optional(),
+      testStatus: z.string().optional(),
+      securityStatus: z.string().optional(),
+      reviewStatus: z.string().optional(),
+      approvalId: z.string().optional(),
     })
     .optional(),
   runs: z.array(WorkflowRunResponseSchema).optional(),

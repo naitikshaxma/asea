@@ -1,24 +1,23 @@
-from fastapi import APIRouter
-from app.schemas import AnalysisRequest, AnalysisResponse
-from app.config import settings
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
+
+from app.schemas import AnalysisRequest, ApiErrorDetail, ApiErrorEnvelope
 
 router = APIRouter(prefix="/api/v1", tags=["Analysis"])
 
 
-@router.post("/analyze", response_model=AnalysisResponse)
-def analyze_task(request: AnalysisRequest) -> AnalysisResponse:
-    # Phase 1 skeleton returns structural triage and confirms contract boundary
-    return AnalysisResponse(
-        taskId=request.taskId,
-        status="READY_FOR_TRIAGE",
-        insights=[
-            f"Received task query of length {len(request.query)} characters.",
-            f"Task category classified as '{request.taskType}'.",
-            "Contract interface verified between API and AI-service.",
-            "Local mock analysis active - autonomous LLM reasoning loop scheduled for Phase 2.",
-        ],
-        confidence=1.0,
-        suggestedAction="Queue for execution sandbox verification once Phase 2 worker engine is active.",
-        providerUsed=settings.LLM_PROVIDER,
-        phaseNote="Phase 1 AI-service skeleton active without external API dependencies.",
+@router.post("/analyze")
+def analyze_task(_body: AnalysisRequest, request: Request) -> JSONResponse:
+    """Keep the retired triage route explicit instead of returning mock findings."""
+    envelope = ApiErrorEnvelope(
+        success=False,
+        error=ApiErrorDetail(
+            code="NOT_IMPLEMENTED",
+            message="Natural-language task analysis is not implemented; use the verification workflow for change review.",
+            requestId=request.headers.get("x-request-id"),
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        ),
     )
+    return JSONResponse(status_code=501, content=envelope.model_dump())

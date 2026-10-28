@@ -5,9 +5,11 @@
   "type": "module",
   "description": "End-to-end tests against the full stack (run with `npm run e2e` from the repository root)",
   "scripts": {
-    "test:api": "vitest run --config vitest.config.ts"
+    "test:api": "vitest run --config vitest.config.ts",
+    "test:ui": "playwright test --config playwright.config.ts"
   },
   "devDependencies": {
+    "@playwright/test": "^1.49.1",
     "vitest": "^3.0.5"
   }
 }

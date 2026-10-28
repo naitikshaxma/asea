@@ -13,9 +13,10 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
 
     # LLM behind the negative-space, architecture and reporter agents (app/llm).
-    # "fake" is deterministic and needs no key (tests, CI, keyless local runs);
-    # "anthropic" needs LLM_API_KEY. MODEL_NAME empty = the provider's default.
-    LLM_PROVIDER: str = "fake"
+    # "anthropic" needs LLM_API_KEY. Without a usable provider, LLM stages are
+    # skipped and the deterministic checks still run. "fake" is test-only and
+    # must be selected explicitly. MODEL_NAME empty = the provider's default.
+    LLM_PROVIDER: str = "anthropic"
     LLM_API_KEY: Optional[str] = None
     MODEL_NAME: str = ""
     LLM_EFFORT: str = "high"
@@ -23,6 +24,12 @@ class Settings(BaseSettings):
     LLM_TIMEOUT_SECONDS: float = 120
     AGENT_TIMEOUT_SECONDS: float = 240
     AGENT_MAX_ATTEMPTS: int = 2
+
+    # Patch review runs as a separate configured model identity. Leaving these
+    # unset intentionally makes the independent review stage unavailable.
+    REVIEW_LLM_PROVIDER: Optional[str] = None
+    REVIEW_LLM_API_KEY: Optional[str] = None
+    REVIEW_MODEL_NAME: Optional[str] = None
 
     # Repository index (app/rag). Empty QDRANT_URL = in-memory Qdrant (lost on restart)
     QDRANT_URL: Optional[str] = None

@@ -1,0 +1,4 @@
+title = "ASEA trusted secret detection configuration"
+
+[extend]
+useDefault = true

@@ -98,6 +98,28 @@ describe('Transactional Outbox, Queue & Task Cancellation', () => {
     expect(res.body.status).toBe('CANCELLED');
   });
 
+  it('cancels NEEDS_ATTENTION tasks immediately because no worker remains to observe a request', async () => {
+    vi.spyOn(prisma.workspaceMembership, 'findUnique').mockResolvedValueOnce({
+      id: 'mem-charlie', workspaceId, userId: testUser.id, role: 'MEMBER', createdAt: new Date(),
+      workspace: { id: workspaceId, name: "Charlie's Workspace", ownerId: testUser.id },
+    } as any);
+    const reviewTask = {
+      id: 'task-review-01', workspaceId, status: 'NEEDS_ATTENTION' as const, title: 'Patch to review',
+      description: 'Waiting for a patch review', taskType: 'CODE_PATCH' as const, priority: 'NORMAL' as const,
+      runs: [{ id: 'run-review-01', status: 'COMPLETED' as const }], createdAt: new Date(), updatedAt: new Date(),
+    };
+    vi.spyOn(prisma.task, 'findFirst').mockResolvedValueOnce(reviewTask as any);
+    vi.spyOn(prisma.task, 'update').mockResolvedValueOnce({ ...reviewTask, status: 'CANCELLED' } as any);
+
+    const res = await request(app)
+      .post(`/api/v1/workspaces/${workspaceId}/tasks/${reviewTask.id}/cancel`)
+      .set('Authorization', `Bearer ${testToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('CANCELLED');
+    expect(prisma.task.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'CANCELLED' }) }));
+  });
+
   it('POST /api/v1/workspaces/:workspaceId/tasks/:taskId/cancel rejects cancelling COMPLETED tasks', async () => {
     vi.spyOn(prisma.workspaceMembership, 'findUnique').mockResolvedValueOnce({
       id: 'mem-charlie',

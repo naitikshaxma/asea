@@ -53,3 +53,18 @@ export const AuthResponseSchema = z.object({
 });
 
 export type AuthResponse = z.infer<typeof AuthResponseSchema>;
+
+export const ChangePasswordRequestSchema = z.object({
+  currentPassword: z.string().min(1).max(128),
+  newPassword: z.string().min(8).max(128),
+});
+export type ChangePasswordRequest = z.infer<typeof ChangePasswordRequestSchema>;
+
+export const PasswordResetRequestSchema = z.object({ email: z.string().email().toLowerCase().trim() });
+export type PasswordResetRequest = z.infer<typeof PasswordResetRequestSchema>;
+
+export const CompletePasswordResetRequestSchema = z.object({
+  token: z.string().min(32).max(256),
+  newPassword: z.string().min(8).max(128),
+});
+export type CompletePasswordResetRequest = z.infer<typeof CompletePasswordResetRequestSchema>;

@@ -9,8 +9,13 @@ repository code, rebuilt from git on demand and cached per commit.
   `ingest -> static -> (negative_space || architecture) -> score -> report`.
 - `POST /api/v1/index`, `GET /api/v1/index/{repo}/{sha}`: the repository index.
 - `POST /api/v1/verify/static`, `POST /api/v1/verify/score`: single nodes.
-- No API key is needed by default: `LLM_PROVIDER=fake` is a deterministic
-  stand-in used by tests, CI and the local stack.
+- `LLM_PROVIDER=anthropic` is the default. When `LLM_API_KEY` is missing or
+  invalid, LLM-dependent stages are marked skipped; deterministic static
+  analysis and scoring still run, and the report uses its finding-based
+  fallback. This does not fabricate a model result.
+- `LLM_PROVIDER=fake` explicitly selects a deterministic test stand-in. The UI
+  and engine status identify it as fake; do not treat those runs as live AI
+  reviews. Tests and the E2E Compose overlay opt into it explicitly.
 
 ## Local Development
 
@@ -44,7 +49,7 @@ pytest
 |---|---|---|
 | `GET` | `/health` | Process uptime and health status |
 | `GET` | `/ready` | Service readiness and dependency connectivity |
-| `POST` | `/api/v1/analyze` | Repository task analysis and triage skeleton |
+| `POST` | `/api/v1/analyze` | Retired placeholder; returns `501 NOT_IMPLEMENTED` |
 | `POST` | `/api/v1/verify/static` | ASEA static analysis: `VerificationRequest` → `StaticAnalysisResult` |
 | `POST` | `/api/v1/verify/score` | Deterministic scoring: `{findings, policy, incomplete_agents?}` → `ScoreResult` (score, verdict, per-finding breakdown, caps, adjustments) |
 | `POST` | `/api/v1/verify` | Whole pipeline: `PipelineRequest` → `PipelineResult`, or NDJSON progress events with `Accept: application/x-ndjson` |
@@ -86,7 +91,7 @@ built from the findings.
 Agents call `LLMProvider.complete(LLMRequest)` and get a validated Pydantic
 object back. `LLM_PROVIDER` selects the implementation:
 
-- `fake` (default): deterministic rules over the structured inputs the prompt
+- `fake` (explicit test provider): deterministic rules over the structured inputs the prompt
   was built from (requirement keywords → responsibilities, evidence signal →
   judgement, every convention gap shown → confirmed, findings → report). It is
   what the tests, CI and e2e use. It is not a model; the UI and `/ready` say so.

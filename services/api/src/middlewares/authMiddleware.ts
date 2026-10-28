@@ -1,8 +1,9 @@
 import type { Request, Response, NextFunction } from 'express';
 import type { WorkspaceRole } from '@prisma/client';
-import { verifyToken } from '../services/authService.js';
+import { verifyToken, type TokenPayload } from '../services/authService.js';
 import { prisma } from '../services/prisma.js';
 import { config } from '../config.js';
+import { authStateStore } from '../services/authStateStore.js';
 import { AppError } from './errorHandler.js';
 
 declare global {
@@ -12,10 +13,16 @@ declare global {
         id: string;
         email: string;
       };
+      authSession?: {
+        id: string;
+        userId: string;
+      };
       workspace?: {
         id: string;
         name: string;
         ownerId: string;
+        createdAt: Date;
+        updatedAt: Date;
       };
       membership?: {
         id: string;
@@ -33,7 +40,7 @@ const ROLE_HIERARCHY: Record<WorkspaceRole, number> = {
   MEMBER: 1,
 };
 
-export function authenticate(req: Request, _res: Response, next: NextFunction): void {
+export async function authenticate(req: Request, _res: Response, next: NextFunction): Promise<void> {
   let token: string | undefined;
 
   // 1. Check Authorization header
@@ -47,19 +54,37 @@ export function authenticate(req: Request, _res: Response, next: NextFunction): 
     token = req.cookies[config.COOKIE_NAME];
   }
 
-  if (token) {
-    try {
-      const payload = verifyToken(token);
-      req.user = {
-        id: payload.userId,
-        email: payload.email,
-      };
-    } catch {
-      // Invalid token - leave req.user undefined
-    }
+  if (!token) return next();
+
+  let payload: TokenPayload;
+  try {
+    payload = verifyToken(token);
+  } catch {
+    return next();
   }
 
-  next();
+  if (!payload.jti) {
+    // The legacy token helper is retained for route tests only. Deployed APIs
+    // reject JWTs without a server-registered session id.
+    if (config.NODE_ENV === 'test') {
+      req.user = { id: payload.userId, email: payload.email };
+    }
+    return next();
+  }
+
+  req.authSession = { id: payload.jti, userId: payload.userId };
+  const isLogout = req.method === 'POST' && req.originalUrl.split('?')[0] === '/api/v1/auth/logout';
+  if (isLogout) return next();
+
+  try {
+    const sessionUserId = await authStateStore.getSessionUserId(payload.jti);
+    if (sessionUserId === payload.userId) {
+      req.user = { id: payload.userId, email: payload.email };
+    }
+    next();
+  } catch {
+    next(new AppError(503, 'SERVICE_UNAVAILABLE', 'Session storage is temporarily unavailable'));
+  }
 }
 
 export function requireAuth(req: Request, _res: Response, next: NextFunction): void {

@@ -19,6 +19,14 @@ describe('Environment Configuration Validation', () => {
     expect(config.HOST).toBe('0.0.0.0');
     expect(config.POSTGRES_PORT).toBe(5432);
     expect(config.REDIS_PORT).toBe(6379);
+    expect(config.AUTH_STATE_STORE).toBe('redis');
+    expect(config.REDIS_REQUIRED_FOR_READINESS).toBe(true);
+    expect(config.SANDBOX_WORKSPACE_SIZE_MB).toBe(256);
+  });
+
+  it('rejects a sandbox workspace size outside the hard tmpfs bounds', () => {
+    expect(() => validateConfig({ SANDBOX_WORKSPACE_SIZE_MB: '63' })).toThrow(/Invalid environment configuration/);
+    expect(() => validateConfig({ SANDBOX_WORKSPACE_SIZE_MB: '1025' })).toThrow(/Invalid environment configuration/);
   });
 
   it('rejects invalid PORT configuration', () => {
@@ -41,5 +49,13 @@ describe('Environment Configuration Validation', () => {
     expect(() => {
       validateConfig({ AI_SERVICE_URL: 'not-a-valid-url' });
     }).toThrow(/Invalid environment configuration/);
+  });
+
+  it('rejects process-local authentication state in production', () => {
+    expect(() => validateConfig({
+      NODE_ENV: 'production',
+      JWT_SECRET: 'a-production-secret-that-is-not-the-default',
+      AUTH_STATE_STORE: 'memory',
+    })).toThrow(/Production deployments must use Redis/);
   });
 });

@@ -38,8 +38,10 @@ def test_token_is_checked_before_the_body_is_validated(anonymous_client: TestCli
     assert response.status_code == 401
 
 
-def test_api_accepts_the_configured_token(client: TestClient):
-    assert client.post(ANALYZE, json=VALID_ANALYZE).status_code == 200
+def test_api_accepts_the_configured_token_then_reports_retired_route(client: TestClient):
+    response = client.post(ANALYZE, json=VALID_ANALYZE)
+    assert response.status_code == 501
+    assert response.json()["error"]["code"] == "NOT_IMPLEMENTED"
 
 
 def test_api_is_disabled_while_no_token_is_configured(client: TestClient, monkeypatch):
@@ -70,6 +72,8 @@ def test_streamed_oversized_body_without_content_length_is_rejected(client: Test
     assert response.json()["error"]["code"] == "PAYLOAD_TOO_LARGE"
 
 
-def test_body_under_the_limit_is_accepted(client: TestClient, monkeypatch):
+def test_body_under_the_limit_reaches_the_retired_route(client: TestClient, monkeypatch):
     monkeypatch.setattr(settings, "AGENT_MAX_REQUEST_BYTES", 1000)
-    assert client.post(ANALYZE, json=VALID_ANALYZE).status_code == 200
+    response = client.post(ANALYZE, json=VALID_ANALYZE)
+    assert response.status_code == 501
+    assert response.json()["error"]["code"] == "NOT_IMPLEMENTED"

@@ -4,6 +4,7 @@ import { logger } from './logger.js';
 import { closeDbPool } from './services/db.js';
 import { disconnectPrisma } from './services/prisma.js';
 import { closeTaskQueue } from './services/queueService.js';
+import { closeAuthStateStore } from './services/authStateStore.js';
 import { startOutboxDispatcher, stopOutboxDispatcher } from './services/outboxDispatcher.js';
 
 const app = createApp();
@@ -30,6 +31,7 @@ function gracefulShutdown(signal: string) {
     logger.info('HTTP server closed.');
     try {
       await closeTaskQueue();
+      await closeAuthStateStore();
       await disconnectPrisma();
       await closeDbPool();
       logger.info('Database, queue, and pool resources cleanly disconnected.');

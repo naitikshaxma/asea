@@ -57,6 +57,39 @@ describe('Workspace Authorization & Access Control', () => {
     expect(res.body.error.message).toContain('do not have permission');
   });
 
+  it('returns the persisted workspace timestamps from the workspace detail route', async () => {
+    const createdAt = new Date('2025-03-04T05:06:07.000Z');
+    const updatedAt = new Date('2025-04-05T06:07:08.000Z');
+    vi.spyOn(prisma.workspaceMembership, 'findUnique').mockResolvedValueOnce({
+      id: 'mem-detail-01',
+      workspaceId: 'ws-detail-01',
+      userId: userAlice.id,
+      role: 'MEMBER',
+      createdAt,
+      workspace: {
+        id: 'ws-detail-01',
+        name: 'Persistent timestamps',
+        ownerId: 'user-owner-01',
+        createdAt,
+        updatedAt,
+      },
+    } as any);
+
+    const res = await request(app)
+      .get('/api/v1/workspaces/ws-detail-01')
+      .set('Authorization', `Bearer ${tokenAlice}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      id: 'ws-detail-01',
+      name: 'Persistent timestamps',
+      ownerId: 'user-owner-01',
+      role: 'MEMBER',
+      createdAt: createdAt.toISOString(),
+      updatedAt: updatedAt.toISOString(),
+    });
+  });
+
   it('denies workspace mutation if user has only MEMBER role (Privilege Escalation Defense)', async () => {
     // Alice is MEMBER, not ADMIN or OWNER
     vi.spyOn(prisma.workspaceMembership, 'findUnique').mockResolvedValueOnce({

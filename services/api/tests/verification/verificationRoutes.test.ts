@@ -79,6 +79,8 @@ describe('Verification run routes', () => {
     auditHeadHash: null as string | null,
     auditEventCount: null as number | null,
     _count: { findings: 1 },
+    repository: { name: 'demo_app' },
+    task: { title: 'Verify export endpoint' } as { title: string } | null,
   };
   const finding = {
     id: 'row-1',
@@ -177,8 +179,11 @@ describe('Verification run routes', () => {
     expect(prisma.verificationRun.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { workspaceId, taskId: 'task-r' } })
     );
+    expect(list.body.nextCursor).toBeNull();
     expect(list.body.verificationRuns[0]).toMatchObject({
       id: runId,
+      repositoryName: 'demo_app',
+      title: 'Verify export endpoint',
       findingCount: 1,
       score: 65,
       verdict: 'HIGH_RISK',
@@ -217,6 +222,61 @@ describe('Verification run routes', () => {
       ],
       capsApplied: [],
     });
+  });
+
+  it('filters runs and pages through them with a cursor', async () => {
+    const many = Array.from({ length: 3 }, (_, i) => ({ ...runRow, id: `vr-${i}` }));
+    vi.mocked(prisma.verificationRun.findMany).mockImplementation((async (args: any) => {
+      const start = args.cursor ? many.findIndex((r) => r.id === args.cursor.id) + (args.skip ?? 0) : 0;
+      return many.slice(start, start + args.take);
+    }) as any);
+
+    const first = await get(`${base}?limit=2&status=COMPLETED&verdict=HIGH_RISK&repositoryId=repo-r`);
+    expect(first.status).toBe(200);
+    expect(first.body.verificationRuns.map((r: any) => r.id)).toEqual(['vr-0', 'vr-1']);
+    expect(first.body.nextCursor).toBe('vr-1');
+    expect(prisma.verificationRun.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { workspaceId, repositoryId: 'repo-r', status: 'COMPLETED', verdict: 'HIGH_RISK' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: 3,
+      })
+    );
+
+    const second = await get(`${base}?limit=2&cursor=vr-1`);
+    expect(second.body.verificationRuns.map((r: any) => r.id)).toEqual(['vr-2']);
+    expect(second.body.nextCursor).toBeNull();
+    expect(prisma.verificationRun.findMany).toHaveBeenLastCalledWith(expect.objectContaining({ cursor: { id: 'vr-1' }, skip: 1 }));
+  });
+
+  it('rejects invalid list filters with 400', async () => {
+    for (const query of ['limit=0', 'limit=1000', 'limit=abc', 'status=DONE', 'verdict=MAYBE']) {
+      const res = await get(`${base}?${query}`);
+      expect(res.status, query).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    }
+  });
+
+  it('lists the run\'s audit events oldest first with their hash links', async () => {
+    vi.spyOn(prisma.auditEvent, 'findMany').mockResolvedValue(events as any);
+    const res = await get(`${base}/${runId}/audit/events`);
+    expect(res.status).toBe(200);
+    expect(res.body.verificationRunId).toBe(runId);
+    expect(res.body.events.map((e: any) => e.eventType)).toEqual(events.map((e) => e.eventType));
+    expect(res.body.events[1]).toEqual({
+      id: 'evt-1',
+      eventType: 'REPOSITORY_INDEXED',
+      actorId: 'user-r',
+      metadata: events[1]!.metadata,
+      timestamp: new Date(events[1]!.timestamp).toISOString(),
+      prevHash: events[0]!.hash,
+      hash: events[1]!.hash,
+    });
+    expect(prisma.auditEvent.findMany).toHaveBeenCalledWith({
+      where: { resourceType: 'VerificationRun', resourceId: runId },
+      orderBy: [{ timestamp: 'asc' }, { id: 'asc' }],
+    });
+    expect((await get(`${base}/vr-other/audit/events`)).status).toBe(404);
   });
 
   it('returns null breakdown and snapshot for a run that has not been scored', async () => {

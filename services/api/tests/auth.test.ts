@@ -4,6 +4,8 @@ import { createApp } from '../src/app.js';
 import { prisma } from '../src/services/prisma.js';
 import { hashPassword, verifyPassword, generateToken } from '../src/services/authService.js';
 import { config } from '../src/config.js';
+import { authStateStore } from '../src/services/authStateStore.js';
+import { createHash } from 'node:crypto';
 
 describe('Authentication & Authorization Endpoints', () => {
   const app = createApp();
@@ -102,16 +104,34 @@ describe('Authentication & Authorization Endpoints', () => {
   });
 
   it('POST /api/v1/auth/login rejects invalid credentials with generic 401 error', async () => {
-    vi.spyOn(prisma.user, 'findUnique').mockResolvedValueOnce(null);
+    const passwordHash = await hashPassword('the-correct-password');
+    vi.spyOn(prisma.user, 'findUnique')
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 'user-known',
+        email: 'known@example.com',
+        passwordHash,
+        displayName: 'Known',
+        accountStatus: 'ACTIVE',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
 
-    const res = await request(app).post('/api/v1/auth/login').send({
+    const unknownEmail = await request(app).post('/api/v1/auth/login').send({
       email: 'nonexistent@example.com',
       password: 'password123',
     });
+    const wrongPassword = await request(app).post('/api/v1/auth/login').send({
+      email: 'known@example.com',
+      password: 'incorrect-password',
+    });
 
-    expect(res.status).toBe(401);
-    expect(res.body.error.code).toBe('UNAUTHORIZED');
-    expect(res.body.error.message).toBe('Invalid email or password');
+    expect(unknownEmail.status).toBe(401);
+    expect(unknownEmail.body.error.code).toBe('UNAUTHORIZED');
+    expect(unknownEmail.body.error.message).toBe('Invalid email or password');
+    expect(wrongPassword.status).toBe(401);
+    expect(wrongPassword.body.error.code).toBe(unknownEmail.body.error.code);
+    expect(wrongPassword.body.error.message).toBe(unknownEmail.body.error.message);
   });
 
   it('POST /api/v1/auth/login sets only an HttpOnly cookie, which alone authenticates /me', async () => {
@@ -211,6 +231,49 @@ describe('Authentication & Authorization Endpoints', () => {
     expect(res.headers['set-cookie']).toBeDefined();
   });
 
+  it('revokes the server-side session so a copied cookie stops authenticating after logout', async () => {
+    const userId = 'user-revoke-01';
+    const passwordHash = await hashPassword('P@ssword12345!');
+    vi.spyOn(prisma.user, 'findUnique')
+      .mockResolvedValueOnce({
+        id: userId,
+        email: 'revoke@example.com',
+        passwordHash,
+        displayName: 'Revoke Test',
+        accountStatus: 'ACTIVE',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .mockResolvedValueOnce({
+        id: userId,
+        email: 'revoke@example.com',
+        passwordHash,
+        displayName: 'Revoke Test',
+        accountStatus: 'ACTIVE',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        memberships: [],
+      } as any);
+
+    const login = await request(app).post('/api/v1/auth/login').send({
+      email: 'revoke@example.com',
+      password: 'P@ssword12345!',
+    });
+    const cookie = (login.headers['set-cookie'][0] as string).split(';')[0];
+    expect(login.status).toBe(200);
+    expect((await request(app).get('/api/v1/auth/me').set('Cookie', cookie)).status).toBe(200);
+
+    const logout = await request(app)
+      .post('/api/v1/auth/logout')
+      .set('Cookie', cookie)
+      .set('Origin', config.CORS_ORIGIN);
+    expect(logout.status).toBe(200);
+
+    const replay = await request(app).get('/api/v1/auth/me').set('Cookie', cookie);
+    expect(replay.status).toBe(401);
+    expect(replay.body.error.code).toBe('UNAUTHORIZED');
+  });
+
   it('marks the session cookie Secure by NODE_ENV unless COOKIE_SECURE overrides it', async () => {
     const original = { env: config.NODE_ENV, secure: config.COOKIE_SECURE };
     const logoutCookie = async () => (await request(app).post('/api/v1/auth/logout')).headers['set-cookie'][0] as string;
@@ -229,5 +292,75 @@ describe('Authentication & Authorization Endpoints', () => {
       config.NODE_ENV = original.env;
       config.COOKIE_SECURE = original.secure;
     }
+  });
+
+  it('returns the same password-reset response for existing and unknown accounts when delivery is unavailable', async () => {
+    const originalMailbox = config.DEV_MAILBOX_TOKEN;
+    config.DEV_MAILBOX_TOKEN = undefined;
+    try {
+      vi.spyOn(prisma.user, 'findUnique')
+        .mockResolvedValueOnce({ id: 'known-user', email: 'known@example.com' } as any)
+        .mockResolvedValueOnce(null);
+      const known = await request(app).post('/api/v1/auth/password-reset/request').send({ email: 'known@example.com' });
+      const unknown = await request(app).post('/api/v1/auth/password-reset/request').send({ email: 'missing@example.com' });
+      expect(known.status).toBe(202);
+      expect(unknown.status).toBe(202);
+      expect(known.body).toEqual(unknown.body);
+      expect(known.body.message).toContain('If the account can receive');
+    } finally { config.DEV_MAILBOX_TOKEN = originalMailbox; }
+  });
+
+  it('changes a password only after verifying the current password and revokes every server session', async () => {
+    const userId = 'password-change-user';
+    const oldHash = await hashPassword('old-password-55');
+    let savedHash = '';
+    vi.spyOn(prisma.user, 'findUnique').mockResolvedValueOnce({
+      id: userId, email: 'password@example.com', passwordHash: oldHash, displayName: 'Password User', accountStatus: 'ACTIVE',
+    } as any);
+    vi.spyOn(prisma, '$transaction').mockImplementation(async (callback: any) => callback({
+      user: { update: vi.fn().mockImplementation(async ({ data }) => { savedHash = data.passwordHash; return {}; }) },
+      passwordResetToken: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      auditEvent: { create: vi.fn().mockResolvedValue({}) },
+    }));
+    await authStateStore.createSession('password-change-other-session', userId, 60_000);
+
+    const response = await request(app)
+      .post('/api/v1/auth/password/change')
+      .set('Authorization', `Bearer ${generateToken({ userId, email: 'password@example.com' })}`)
+      .send({ currentPassword: 'old-password-55', newPassword: 'new-password-66' });
+    expect(response.status).toBe(200);
+    expect(response.body).not.toHaveProperty('password');
+    expect(await verifyPassword('new-password-66', savedHash)).toBe(true);
+    expect(await authStateStore.getSessionUserId('password-change-other-session')).toBeNull();
+  });
+
+  it('consumes a reset token once, hashes the new password, and revokes existing sessions', async () => {
+    const userId = 'password-reset-user';
+    const rawToken = 'reset-token-value-that-is-only-in-this-test-fixture-123456';
+    const resetRecord = {
+      id: 'reset-1', userId, tokenHash: createHash('sha256').update(rawToken).digest('hex'),
+      expiresAt: new Date(Date.now() + 60_000), usedAt: null,
+      user: { id: userId, email: 'reset@example.com', accountStatus: 'ACTIVE' },
+    };
+    let savedHash = '';
+    vi.spyOn(prisma.passwordResetToken, 'findUnique').mockResolvedValueOnce(resetRecord as any).mockResolvedValueOnce(null);
+    vi.spyOn(prisma, '$transaction').mockImplementation(async (callback: any) => callback({
+      passwordResetToken: {
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+      user: { update: vi.fn().mockImplementation(async ({ data }) => { savedHash = data.passwordHash; return {}; }) },
+      auditEvent: { create: vi.fn().mockResolvedValue({}) },
+    }));
+    await authStateStore.createSession('password-reset-existing-session', userId, 60_000);
+
+    const body = { token: rawToken, newPassword: 'reset-password-77' };
+    const completed = await request(app).post('/api/v1/auth/password-reset/complete').send(body);
+    const replay = await request(app).post('/api/v1/auth/password-reset/complete').send(body);
+    expect(completed.status).toBe(200);
+    expect(replay.status).toBe(400);
+    expect(await verifyPassword('reset-password-77', savedHash)).toBe(true);
+    expect(await authStateStore.getSessionUserId('password-reset-existing-session')).toBeNull();
+    expect(JSON.stringify(completed.body)).not.toContain(rawToken);
   });
 });

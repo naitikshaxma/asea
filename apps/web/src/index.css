@@ -2,30 +2,86 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Design tokens (RGB triplets, used through tailwind.config.js). Light first, dark under .dark. */
 @layer base {
+  :root {
+    --bg: 250 250 250;
+    --surface: 255 255 255;
+    --surface-2: 244 244 245;
+    --border: 228 228 231;
+    --border-strong: 212 212 216;
+    --fg: 24 24 27;
+    --fg-muted: 82 82 91;
+    --fg-subtle: 133 133 144;
+    --accent: 79 70 229;
+    --accent-fg: 255 255 255;
+    --accent-soft: 238 242 255;
+    --ok: 22 163 74;
+    --warn: 202 138 4;
+    --high: 234 88 12;
+    --danger: 220 38 38;
+    --info: 37 99 235;
+    color-scheme: light;
+  }
+
+  .dark {
+    --bg: 9 9 11;
+    --surface: 17 17 20;
+    --surface-2: 26 26 30;
+    --border: 39 39 44;
+    --border-strong: 63 63 70;
+    --fg: 244 244 245;
+    --fg-muted: 170 170 180;
+    --fg-subtle: 120 120 130;
+    --accent: 129 140 248;
+    --accent-fg: 9 9 11;
+    --accent-soft: 30 27 75;
+    --ok: 74 222 128;
+    --warn: 250 204 21;
+    --high: 251 146 60;
+    --danger: 248 113 113;
+    --info: 96 165 250;
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
   body {
-    background-color: #090d16;
-    color: #f1f5f9;
+    @apply bg-bg font-sans text-sm text-fg antialiased;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   }
 
-  code, pre {
-    font-family: 'JetBrains Mono', monospace;
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent/60 ring-offset-2 ring-offset-bg;
+  }
+
+  ::selection {
+    @apply bg-accent/25;
   }
 }
 
-/* Custom subtle scrollbars */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+@layer components {
+  .skeleton {
+    @apply relative overflow-hidden rounded bg-surface-2;
+  }
+  .skeleton::after {
+    content: '';
+    @apply absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-fg/5 to-transparent;
+  }
 }
-::-webkit-scrollbar-track {
-  background: #090d16;
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #334155;
-  border-radius: 3px;
+  background: rgb(var(--border-strong));
+  border-radius: 4px;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+::-webkit-scrollbar-track {
+  background: transparent;
 }

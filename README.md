@@ -2,6 +2,8 @@
 
 > An enterprise-grade platform for autonomous software engineering, repository intelligence, and verified code repair.
 
+> Current scope includes local repository analysis, change verification, and a bounded `CODE_PATCH` workflow. When configured, the worker snapshots a repository, applies a bounded proposal only in the disposable copy, runs exact-policy tests and scanners through an opt-in Docker provider, obtains a separate reviewer decision, then requests hash-bound human approval. Missing sandbox, scanners, or reviewer blocks approval and publication. Docker was unavailable in the last verification session, so the provider has not been exercised against a live engine. GitHub App publication and CI synchronization are implemented but require live credentials for smoke tests. See the [implementation status](docs/IMPLEMENTATION_STATUS.md) and [API reference](docs/API_REFERENCE.md) for verified behavior and limits.
+
 ---
 
 ## 1. Product Vision
@@ -43,7 +45,16 @@ Phase 3 implements the **Repository Intelligence Engine**, giving the platform t
   - Workspace-scoped authorization ensuring only authenticated members of a workspace can analyze or query repositories.
   - All task endpoints are workspace-scoped (`/api/v1/workspaces/:workspaceId/tasks`); the unauthenticated legacy `/api/v1/tasks` routes have been removed.
 - **Background Worker Pipeline Integration (`worker.ts`)**:
-  - Integrates repository analysis directly into the BullMQ worker during the `INSPECT_REPOSITORY` workflow step.
+  - Runs verification jobs through BullMQ and handles provider-backed `CODE_PATCH` proposals when all required configuration is present.
+  - Patch work occurs only in an isolated task snapshot; proposal, patch metadata, approval, workflow state, and audit entries are persisted together.
+  - Only `CODE_PATCH` and `VERIFICATION` tasks are accepted; other task types are rejected at submission with `400 VALIDATION_ERROR`. Missing dependencies stop in an explicit `NEEDS_ATTENTION` state; no test success or patch is fabricated.
+- **Task Workspace and Patch Safety Libraries**:
+  - Create a bounded, secret-filtered repository copy in a separate task directory and calculate a content snapshot hash.
+  - Validate bounded unified text patches and apply additions/modifications only inside a task directory.
+  - The source checkout is left untouched, the disposable copy is removed after proposal validation, and one invalid diff repair is permitted.
+- **Engineering Task and Review UI (`apps/web`)**:
+  - Create tasks, follow persisted workflow steps, inspect the exact unified diff, and approve or reject proposals through role-checked APIs.
+  - Displays persisted test, scanner, review, approval, GitHub, and CI evidence. Missing sandbox or reviewer configuration remains an explicit blocked state.
 - **Interactive Developer Dashboard (`apps/web`)**:
   - Dedicated "Repo Intelligence" tab with technology cards, architecture map, interactive task query tool, and searchable file inventory browser.
 
@@ -71,11 +82,11 @@ Phase 3 implements the **Repository Intelligence Engine**, giving the platform t
 | **Task Persistence** | In-memory register | PostgreSQL (Prisma ORM) | **PostgreSQL + Analysis History & Snapshots** | Large blob / artifact S3 storage |
 | **Task Queue & Workers** | Synchronous register | BullMQ + Redis + Dedicated Worker | **BullMQ Worker with Real Repo Inspection** | Distributed worker autoscaling |
 | **Delivery Guarantee** | None | Transactional Outbox Pattern | **Transactional Outbox Pattern** | Dead-letter queue inspection UI |
-| **User & Tenant Auth** | Open / None | Bcrypt + JWT + HttpOnly Cookies + RBAC | **Hardened Multi-Tenant Authorization** | SSO / SAML / WebAuthn MFA |
+| **User & Tenant Auth** | Open / None | Bcrypt + JWT + HttpOnly Cookies + RBAC | Redis-backed revocable sessions, shared rate limits, CSRF checks | SSO / SAML / WebAuthn MFA |
 | **Repository Attachment** | Local checkout mode | Workspace Repositories in PostgreSQL | **Repository Snapshot Collection & Analysis** | Real GitHub App & Webhook listener |
 | **Repository Intelligence** | None | Basic metadata record | **Tech Detection, Import Extraction (regex) & File Retrieval** | Semantic vector embeddings |
-| **Code Execution** | Host shell disabled | Deterministic Safe Worker Steps | **Deterministic Safe Worker Steps** | Disposable gVisor / MicroVM sandboxes |
-| **AI Reasoning Engine** | FastAPI mock skeleton | FastAPI mock with validated contract | FastAPI mock with validated contract | LangGraph / multi-agent reasoning loop |
+| **Code Execution** | Host shell disabled | No repository execution | Opt-in Docker provider and exact command policy; disabled by default and not live-verified | Hardened VM/runtime and approved dependency cache |
+| **AI Reasoning Engine** | FastAPI mock skeleton | Validated service boundary | LangGraph verification pipeline with deterministic checks and optional configured Anthropic provider; no-key runs skip LLM stages |
 
 ---
 
@@ -138,6 +149,8 @@ pip install -r requirements.txt
 cd ../..
 ```
 
+The default `LLM_PROVIDER=anthropic` requires `LLM_API_KEY` for LLM stages. Without a key, static checks and deterministic scoring still run; LLM stages are recorded as skipped and the report uses a deterministic fallback. `LLM_PROVIDER=fake` is an explicit test stand-in and is not a live AI review.
+
 ---
 
 ## 7. Starting and Stopping Services
@@ -184,10 +197,7 @@ npm run dev:agent
 - **Redis**: `127.0.0.1:6379`
 
 ### Repository Intelligence Endpoints
-- `POST /api/v1/workspaces/:workspaceId/repositories/:repositoryId/analyze` — Trigger synchronous or background repository analysis.
-- `GET /api/v1/workspaces/:workspaceId/repositories/:repositoryId/analysis` — Get latest repository analysis summary, technology findings, and stats.
-- `GET /api/v1/workspaces/:workspaceId/repositories/:repositoryId/analysis/:analysisId/files` — Paginated file inventory with categories, languages, and skip reasons.
-- `POST /api/v1/workspaces/:workspaceId/repositories/:repositoryId/relevant-files` — Task-focused file retrieval and ranking for an engineering prompt.
+See the [complete API reference](docs/API_REFERENCE.md) for repository analysis and all other routes. Analysis is synchronous and limited to local repositories inside `ALLOWED_REPO_ROOTS`.
 
 ### ASEA Verification Endpoints
 Submit a `VERIFICATION` task (see [docs/development.md](docs/development.md)); the agent service must be running with the same `INTERNAL_SERVICE_TOKEN`.
@@ -212,23 +222,26 @@ A policy turns findings into a score and verdict (see `packages/contracts/src/po
 
 ## 9. Automated Testing Commands
 
-Typecheck and the TypeScript test suites need step 2 of the setup (contracts built, Prisma Client generated). They do not need a running database.
+Typecheck and the TypeScript test suites need step 2 of the setup (contracts built, Prisma Client generated). They do not need a running database. The latest audited counts are in [implementation status](docs/IMPLEMENTATION_STATUS.md).
 
 ```bash
-# Run all Node.js and Frontend tests (128 API tests + 11 Web tests = 139 tests):
+# Run API and frontend tests:
 npm test
 
-# Run API test suite individually (128 tests):
+# Run API tests individually:
 npm run test:api
 
-# Run Web test suite individually (11 tests):
+# Run Web tests individually:
 npm run test:web
 
-# Run Python Pytest test suite (68 agent tests):
+# Run Python agent-service tests:
 npm run test:python
 
-# Run All (TypeScript + Python = 207 total automated tests):
+# Run API, frontend, and Python tests:
 npm run test:all
+
+# Run the isolated Docker end-to-end suite (uses its own Compose project and volumes):
+npm run e2e
 
 # Run type checking across all TypeScript workspaces:
 npm run typecheck
@@ -241,7 +254,9 @@ npm run build
 
 ## 10. Documentation Index
 
-- [Architecture Specification (Phase 3)](file:///c:/Users/sharm/OneDrive/Desktop/miniprject/docs/architecture.md)
-- [Local Development Guide (Phase 3)](file:///c:/Users/sharm/OneDrive/Desktop/miniprject/docs/development.md)
-- [Security Architecture & Threat Model (Phase 3)](file:///c:/Users/sharm/OneDrive/Desktop/miniprject/docs/security.md)
-- [Worker Sandbox Boundary](file:///c:/Users/sharm/OneDrive/Desktop/miniprject/workers/execution-worker/README.md)
+- [Implementation status](docs/IMPLEMENTATION_STATUS.md)
+- [API reference](docs/API_REFERENCE.md)
+- [Architecture](docs/architecture.md)
+- [Local development guide](docs/development.md)
+- [Security architecture and threat model](docs/security.md)
+- [Planned worker sandbox boundary](workers/execution-worker/README.md)

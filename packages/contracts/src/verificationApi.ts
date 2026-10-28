@@ -33,6 +33,9 @@ export const VerificationRunResponseSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
   repositoryId: z.string(),
+  repositoryName: z.string(),
+  // The task's title (null for runs whose task was deleted)
+  title: z.string().nullable(),
   taskId: z.string().optional(),
   baseSha: z.string(),
   headSha: z.string(),
@@ -130,8 +133,21 @@ export const VerificationRunDetailResponseSchema = VerificationRunResponseSchema
 });
 export type VerificationRunDetailResponse = z.infer<typeof VerificationRunDetailResponseSchema>;
 
+export const VerificationRunListQuerySchema = z.object({
+  taskId: z.string().min(1).optional(),
+  repositoryId: z.string().min(1).optional(),
+  status: z.enum(['QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED']).optional(),
+  verdict: VerdictResponseEnum.optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  // Id of the last run of the previous page
+  cursor: z.string().min(1).optional(),
+});
+export type VerificationRunListQuery = z.infer<typeof VerificationRunListQuerySchema>;
+
 export const VerificationRunListResponseSchema = z.object({
   verificationRuns: z.array(VerificationRunResponseSchema),
+  // Pass as `cursor` to get the next page; null on the last page
+  nextCursor: z.string().nullable(),
 });
 export type VerificationRunListResponse = z.infer<typeof VerificationRunListResponseSchema>;
 
@@ -156,6 +172,57 @@ export const VerificationFindingListResponseSchema = z.object({
   total: z.number().int(),
 });
 export type VerificationFindingListResponse = z.infer<typeof VerificationFindingListResponseSchema>;
+
+export const AuditEventResponseSchema = z.object({
+  id: z.string(),
+  eventType: z.string(),
+  actorId: z.string().nullable(),
+  metadata: z.unknown(),
+  timestamp: IsoTimestampSchema,
+  prevHash: z.string().nullable(),
+  hash: z.string().nullable(),
+});
+export type AuditEventResponse = z.infer<typeof AuditEventResponseSchema>;
+
+export const AuditEventListResponseSchema = z.object({
+  verificationRunId: z.string(),
+  // Oldest first
+  events: z.array(AuditEventResponseSchema),
+});
+export type AuditEventListResponse = z.infer<typeof AuditEventListResponseSchema>;
+
+// GET /workspaces/:ws/stats: what the dashboard shows, computed from the workspace's runs
+export const WorkspaceStatsResponseSchema = z.object({
+  totalRuns: z.number().int(),
+  byStatus: z.record(z.string(), z.number().int()),
+  byVerdict: z.record(z.string(), z.number().int()),
+  averageScore: z.number().nullable(),
+  findingsBySeverity: z.record(z.string(), z.number().int()),
+  // Runs created per UTC day over the last 14 days, oldest first, zero-filled
+  activity: z.array(z.object({ date: z.string(), runs: z.number().int() })),
+  recentRuns: z.array(VerificationRunResponseSchema),
+});
+export type WorkspaceStatsResponse = z.infer<typeof WorkspaceStatsResponseSchema>;
+
+// GET /api/v1/system/status: integrations as configured on the server
+export const SystemStatusResponseSchema = z.object({
+  engine: z.object({
+    status: z.enum(['up', 'down']),
+    llm: z.object({ status: z.string(), message: z.string().nullable() }).nullable(),
+    codeIndex: z.object({ status: z.string(), message: z.string().nullable() }).nullable(),
+  }),
+  sandbox: z.object({
+    provider: z.enum(['docker', 'unavailable']),
+    status: z.enum(['READY', 'UNAVAILABLE']),
+    image: z.string().nullable(),
+    reasonCode: z.string().nullable(),
+    message: z.string(),
+  }),
+  github: z.object({ commentsEnabled: z.boolean(), apiUrl: z.string() }),
+  publicWebUrl: z.string(),
+  webhookUrl: z.string(),
+});
+export type SystemStatusResponse = z.infer<typeof SystemStatusResponseSchema>;
 
 export const AuditChainVerificationResponseSchema = z.object({
   verificationRunId: z.string(),

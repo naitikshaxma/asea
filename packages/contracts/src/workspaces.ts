@@ -40,3 +40,34 @@ export const WorkspaceListResponseSchema = z.object({
 });
 
 export type WorkspaceListResponse = z.infer<typeof WorkspaceListResponseSchema>;
+
+export const WorkspaceMemberSchema = z.object({
+  id: RequestIdSchema,
+  userId: RequestIdSchema,
+  email: z.string().email(),
+  displayName: z.string(),
+  role: UserRoleEnum,
+  createdAt: IsoTimestampSchema,
+});
+export type WorkspaceMember = z.infer<typeof WorkspaceMemberSchema>;
+
+export const CreateWorkspaceInvitationRequestSchema = z.object({
+  email: z.string().email().toLowerCase().trim(),
+  role: z.enum(['ADMIN', 'MEMBER']).default('MEMBER'),
+});
+export type CreateWorkspaceInvitationRequest = z.infer<typeof CreateWorkspaceInvitationRequestSchema>;
+
+export const WorkspaceInvitationResponseSchema = z.object({
+  id: RequestIdSchema,
+  workspaceId: RequestIdSchema,
+  email: z.string().email(),
+  role: z.enum(['ADMIN', 'MEMBER']),
+  expiresAt: IsoTimestampSchema,
+  acceptedAt: IsoTimestampSchema.nullable(),
+  revokedAt: IsoTimestampSchema.nullable(),
+  createdAt: IsoTimestampSchema,
+});
+export type WorkspaceInvitationResponse = z.infer<typeof WorkspaceInvitationResponseSchema>;
+
+export const UpdateWorkspaceMemberRoleRequestSchema = z.object({ role: z.enum(['ADMIN', 'MEMBER']) });
+export type UpdateWorkspaceMemberRoleRequest = z.infer<typeof UpdateWorkspaceMemberRoleRequestSchema>;

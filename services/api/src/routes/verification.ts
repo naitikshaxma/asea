@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import type { FindingSeverity, VerificationRun } from '@prisma/client';
+import type { FindingSeverity, Prisma, VerificationRun } from '@prisma/client';
 import {
   AgentTimelineEntrySchema,
   EngineInfoSchema,
@@ -7,7 +7,9 @@ import {
   PolicyConfigSchema,
   RunReportSchema,
   ScoreResultSchema,
+  VerificationRunListQuerySchema,
   type AuditChainVerificationResponse,
+  type AuditEventListResponse,
   type ScoreBreakdownResponse,
   type VerificationFindingListResponse,
   type VerificationRunDetailResponse,
@@ -32,11 +34,26 @@ export const verificationRouter = Router({ mergeParams: true });
 
 const SEVERITIES: FindingSeverity[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
 
-function formatRun(run: VerificationRun & { _count: { findings: number } }): VerificationRunResponse {
+// What every run response needs besides the run itself, in one query (no N+1)
+export const RUN_INCLUDE = {
+  _count: { select: { findings: true } },
+  repository: { select: { name: true } },
+  task: { select: { title: true } },
+} satisfies Prisma.VerificationRunInclude;
+
+type RunWithIncludes = VerificationRun & {
+  _count: { findings: number };
+  repository: { name: string };
+  task: { title: string } | null;
+};
+
+export function formatRun(run: RunWithIncludes): VerificationRunResponse {
   return {
     id: run.id,
     workspaceId: run.workspaceId,
     repositoryId: run.repositoryId,
+    repositoryName: run.repository.name,
+    title: run.task?.title ?? null,
     taskId: run.taskId ?? undefined,
     baseSha: run.baseSha,
     headSha: run.headSha,
@@ -91,7 +108,7 @@ function formatScoreBreakdown(stored: unknown): ScoreBreakdownResponse | null {
 async function findRunOr404(workspaceId: string, runId: string) {
   const run = await prisma.verificationRun.findFirst({
     where: { id: runId, workspaceId },
-    include: { _count: { select: { findings: true } } },
+    include: RUN_INCLUDE,
   });
   if (!run) {
     throw new AppError(404, 'NOT_FOUND', `Verification run ${runId} not found`);
@@ -105,14 +122,26 @@ verificationRouter.get(
   requireWorkspaceMembership('MEMBER'),
   async (req, res, next) => {
     try {
-      const taskId = typeof req.query['taskId'] === 'string' ? req.query['taskId'] : undefined;
+      const query = VerificationRunListQuerySchema.parse(req.query);
+      // Newest first; one extra row tells whether there is a next page
       const runs = await prisma.verificationRun.findMany({
-        where: { workspaceId: req.params['workspaceId']!, ...(taskId ? { taskId } : {}) },
-        include: { _count: { select: { findings: true } } },
-        orderBy: { createdAt: 'desc' },
-        take: 50,
+        where: {
+          workspaceId: req.params['workspaceId']!,
+          ...(query.taskId ? { taskId: query.taskId } : {}),
+          ...(query.repositoryId ? { repositoryId: query.repositoryId } : {}),
+          ...(query.status ? { status: query.status } : {}),
+          ...(query.verdict ? { verdict: query.verdict } : {}),
+        },
+        include: RUN_INCLUDE,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: query.limit + 1,
+        ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
       });
-      const body: VerificationRunListResponse = { verificationRuns: runs.map(formatRun) };
+      const page = runs.slice(0, query.limit);
+      const body: VerificationRunListResponse = {
+        verificationRuns: page.map(formatRun),
+        nextCursor: runs.length > query.limit ? page[page.length - 1]!.id : null,
+      };
       res.status(200).json(body);
     } catch (err) {
       next(err);
@@ -172,6 +201,37 @@ verificationRouter.get(
           source: f.source,
           ruleId: f.ruleId,
           remediation: f.remediation,
+        })),
+      };
+      res.status(200).json(body);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/** The run's audit events, oldest first, with their hash links. */
+verificationRouter.get(
+  '/workspaces/:workspaceId/verification-runs/:runId/audit/events',
+  requireAuth,
+  requireWorkspaceMembership('MEMBER'),
+  async (req, res, next) => {
+    try {
+      const run = await findRunOr404(req.params['workspaceId']!, req.params['runId']!);
+      const events = await prisma.auditEvent.findMany({
+        where: { resourceType: VERIFICATION_RESOURCE_TYPE, resourceId: run.id },
+        orderBy: [{ timestamp: 'asc' }, { id: 'asc' }],
+      });
+      const body: AuditEventListResponse = {
+        verificationRunId: run.id,
+        events: events.map((e) => ({
+          id: e.id,
+          eventType: e.eventType,
+          actorId: e.actorId,
+          metadata: e.metadata,
+          timestamp: e.timestamp.toISOString(),
+          prevHash: e.prevHash,
+          hash: e.hash,
         })),
       };
       res.status(200).json(body);

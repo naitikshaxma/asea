@@ -36,6 +36,7 @@ export const RepositoryResponseSchema = z.object({
   githubFullName: z.string().nullable(),
   // A webhook secret exists (the secret itself is only returned when generated)
   githubWebhookConfigured: z.boolean(),
+  githubAppConnected: z.boolean().optional(),
   createdAt: IsoTimestampSchema,
   updatedAt: IsoTimestampSchema,
 });

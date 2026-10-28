@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { z } from 'zod';
+import { TaskStatus, TaskType } from '@prisma/client';
 import {
   TaskSubmissionRequestSchema,
   type TaskResponse,
@@ -11,11 +13,19 @@ import { dispatchPendingOutboxEvents } from '../services/outboxDispatcher.js';
 import { AppError } from '../middlewares/errorHandler.js';
 import { cancelVerificationRunForTask } from '../services/verification/verificationService.js';
 import { submitTask } from '../services/taskSubmission.js';
+import { redactSensitiveData } from '../services/engineering/outputRedaction.js';
 
 export const tasksRouter = Router({ mergeParams: true });
 
+// List filters use the database enums: the contract's status enum still has
+// legacy values no stored task can hold, and every stored type stays listable.
+const taskListQuerySchema = z.object({
+  status: z.nativeEnum(TaskStatus).optional(),
+  taskType: z.nativeEnum(TaskType).optional(),
+});
+
 function formatTaskResponse(task: any): TaskResponse {
-  return {
+  return redactSensitiveData({
     id: task.id,
     workspaceId: task.workspaceId,
     repositoryId: task.repositoryId ?? undefined,
@@ -60,7 +70,7 @@ function formatTaskResponse(task: any): TaskResponse {
             : undefined,
         }))
       : undefined,
-  };
+  } as TaskResponse);
 }
 
 // -----------------------------------------------------------------------------
@@ -94,14 +104,13 @@ tasksRouter.get(
   async (req, res, next) => {
     try {
       const workspaceId = req.params['workspaceId']!;
-      const statusFilter = req.query['status'] as any;
-      const typeFilter = req.query['taskType'] as any;
+      const { status, taskType } = taskListQuerySchema.parse(req.query);
 
       const tasks = await prisma.task.findMany({
         where: {
           workspaceId,
-          ...(statusFilter ? { status: statusFilter } : {}),
-          ...(typeFilter ? { taskType: typeFilter } : {}),
+          ...(status ? { status } : {}),
+          ...(taskType ? { taskType } : {}),
         },
         include: { runs: true },
         orderBy: { createdAt: 'desc' },
@@ -143,6 +152,57 @@ tasksRouter.get(
   }
 );
 
+tasksRouter.get(
+  '/workspaces/:workspaceId/tasks/:taskId/patch',
+  requireAuth,
+  requireWorkspaceMembership('MEMBER'),
+  async (req, res, next) => {
+    try {
+      const { workspaceId, taskId } = req.params;
+      const patch = await prisma.taskPatch.findFirst({
+        where: { taskId, task: { workspaceId } },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (!patch) throw new AppError(404, 'NOT_FOUND', 'Task patch not found');
+      res.status(200).json(redactSensitiveData({
+        id: patch.id,
+        taskId: patch.taskId,
+        workflowRunId: patch.workflowRunId,
+        snapshotHash: patch.snapshotHash,
+        patchHash: patch.patchHash,
+        summary: patch.summary,
+        plan: patch.plan,
+        evidence: patch.evidence,
+        contextFiles: patch.contextFiles,
+        changedFiles: patch.changedFiles,
+        unifiedDiff: patch.unifiedDiff,
+        testStatus: patch.testStatus,
+        testResults: patch.testResults,
+        securityStatus: patch.securityStatus,
+        securityResults: patch.securityResults,
+        reviewStatus: patch.reviewStatus,
+        reviewResults: patch.reviewResults,
+        sandboxDiagnostics: patch.sandboxDiagnostics,
+        workspaceCleanupStatus: patch.workspaceCleanupStatus,
+        status: patch.status,
+        publicationStatus: patch.publicationStatus,
+        publicationError: patch.publicationError,
+        publishedBranch: patch.publishedBranch,
+        githubCommitSha: patch.githubCommitSha,
+        pullRequestNumber: patch.pullRequestNumber,
+        pullRequestUrl: patch.pullRequestUrl,
+        publishedAt: patch.publishedAt?.toISOString() ?? null,
+        ciStatus: patch.ciStatus,
+        ciChecks: patch.ciChecks,
+        ciDiagnosis: patch.ciDiagnosis,
+        ciSyncedAt: patch.ciSyncedAt?.toISOString() ?? null,
+        createdAt: patch.createdAt.toISOString(),
+        updatedAt: patch.updatedAt.toISOString(),
+      }));
+    } catch (err) { next(err); }
+  }
+);
+
 tasksRouter.post(
   '/workspaces/:workspaceId/tasks/:taskId/cancel',
   requireAuth,
@@ -168,7 +228,9 @@ tasksRouter.post(
       }
 
       // If QUEUED, cancel immediately
-      const nextStatus = task.status === 'QUEUED' ? 'CANCELLED' : 'CANCEL_REQUESTED';
+      // NEEDS_ATTENTION jobs have no active worker to observe a cancellation
+      // request, so finish cancellation synchronously and prevent stale review.
+      const nextStatus = task.status === 'QUEUED' || task.status === 'NEEDS_ATTENTION' ? 'CANCELLED' : 'CANCEL_REQUESTED';
       validateTaskTransition(task.status, nextStatus);
 
       const updated = await prisma.task.update({

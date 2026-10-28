@@ -4,6 +4,7 @@ import cookieParser from 'cookie-parser';
 import { requestIdMiddleware } from './middlewares/requestId.js';
 import { requestLogger } from './middlewares/loggerMiddleware.js';
 import { authenticate } from './middlewares/authMiddleware.js';
+import { createCsrfProtection } from './middlewares/csrfProtection.js';
 import { errorHandler, notFoundHandler } from './middlewares/errorHandler.js';
 import { createHealthRouter } from './routes/health.js';
 import { authRouter } from './routes/auth.js';
@@ -14,6 +15,10 @@ import { tasksRouter } from './routes/tasks.js';
 import { verificationRouter } from './routes/verification.js';
 import { policiesRouter } from './routes/policies.js';
 import { webhooksRouter, type RawBodyRequest } from './routes/webhooks.js';
+import { statsRouter } from './routes/stats.js';
+import { approvalsRouter } from './routes/approvals.js';
+import { createGithubAppRouter } from './routes/githubApp.js';
+import { devMailboxRouter } from './routes/devMailbox.js';
 import { config, type EnvConfig } from './config.js';
 
 export function createApp(customConfig?: Partial<EnvConfig>): Application {
@@ -44,6 +49,8 @@ export function createApp(customConfig?: Partial<EnvConfig>): Application {
   app.use(requestIdMiddleware);
   app.use(requestLogger);
 
+  app.use(createCsrfProtection(activeConfig.CORS_ORIGIN, activeConfig.COOKIE_NAME));
+
   // Authentication token resolution (populates req.user if token present)
   app.use(authenticate);
 
@@ -52,6 +59,7 @@ export function createApp(customConfig?: Partial<EnvConfig>): Application {
 
   // API v1 routes
   app.use('/api/v1/auth', authRouter);
+  app.use('/api/v1/dev', devMailboxRouter);
   app.use('/api/v1', workspacesRouter);
   app.use('/api/v1', repositoriesRouter);
   app.use('/api/v1', intelligenceRouter);
@@ -59,6 +67,9 @@ export function createApp(customConfig?: Partial<EnvConfig>): Application {
   app.use('/api/v1', verificationRouter);
   app.use('/api/v1', policiesRouter);
   app.use('/api/v1', webhooksRouter);
+  app.use('/api/v1', statsRouter);
+  app.use('/api/v1', approvalsRouter);
+  app.use('/api/v1', createGithubAppRouter(activeConfig));
 
   // 404 handler
   app.use(notFoundHandler);

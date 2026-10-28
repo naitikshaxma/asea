@@ -19,6 +19,7 @@ FROM node:24-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends git openssl ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /repos && chown node:node /repos
+RUN mkdir -p /task-workspaces && chown node:node /task-workspaces
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build --chown=node:node /app /app

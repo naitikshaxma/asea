@@ -18,8 +18,9 @@ describe('API Validation and Task Routes', () => {
   const validPayload = {
     title: 'Fix Memory Leak in Ingestion Pipeline',
     description: 'Investigate unbounded buffer retention during high-throughput repository indexing.',
-    taskType: 'BUG_INVESTIGATION',
+    taskType: 'CODE_PATCH',
     priority: 'HIGH',
+    repositoryId: 'repo-val-01',
     repositoryUrl: 'https://github.com/my-org/core-indexer',
     targetBranch: 'main',
   };
@@ -33,10 +34,12 @@ describe('API Validation and Task Routes', () => {
       createdAt: new Date(),
       workspace: { id: workspaceId, name: 'Validation WS', ownerId: user.id },
     } as any);
+    vi.spyOn(prisma.repository, 'findFirst').mockResolvedValue({ id: 'repo-val-01', workspaceId } as any);
   }
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it('POST /workspaces/:id/tasks persists the task and returns 201', async () => {
@@ -237,6 +240,44 @@ describe('API Validation and Task Routes', () => {
     expect(res.body.error.code).toBe('INTERNAL_SERVER_ERROR');
   });
 
+  it('POST /workspaces/:id/tasks rejects task types without a workflow before persisting anything', async () => {
+    mockMembership();
+    const transaction = vi.spyOn(prisma, '$transaction');
+    for (const taskType of ['BUG_INVESTIGATION', 'TEST_GENERATION', 'CODE_REVIEW', 'CI_DIAGNOSIS']) {
+      const res = await request(app)
+        .post(`/api/v1/workspaces/${workspaceId}/tasks`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ ...validPayload, taskType });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+      const detail = res.body.error.details.find((d: { field: string }) => d.field === 'taskType');
+      expect(detail.message).toMatch(/no workflow yet.*CODE_PATCH, VERIFICATION/);
+    }
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it('POST /workspaces/:id/tasks requires an explicit task type and a repository for CODE_PATCH', async () => {
+    mockMembership();
+    const { taskType: _omitted, ...untyped } = validPayload;
+    const missingType = await request(app)
+      .post(`/api/v1/workspaces/${workspaceId}/tasks`)
+      .set('Authorization', `Bearer ${token}`)
+      .send(untyped);
+    expect(missingType.status).toBe(400);
+    expect(missingType.body.error.details.map((d: { field: string }) => d.field)).toContain('taskType');
+
+    const { repositoryId: _repo, ...unlinked } = validPayload;
+    const missingRepository = await request(app)
+      .post(`/api/v1/workspaces/${workspaceId}/tasks`)
+      .set('Authorization', `Bearer ${token}`)
+      .send(unlinked);
+    expect(missingRepository.status).toBe(400);
+    expect(missingRepository.body.error.details).toEqual(
+      expect.arrayContaining([expect.objectContaining({ field: 'repositoryId', message: 'Required for CODE_PATCH tasks' })])
+    );
+  });
+
   it('POST /workspaces/:id/tasks rejects invalid payload with 400 and validation details', async () => {
     mockMembership();
     const invalidPayload = {
@@ -263,6 +304,32 @@ describe('API Validation and Task Routes', () => {
     expect(fields).toContain('repositoryUrl');
   });
 
+  it('GET /workspaces/:id/tasks rejects unknown status and taskType filters with 400 instead of querying', async () => {
+    mockMembership();
+    const findMany = vi.spyOn(prisma.task, 'findMany');
+    for (const query of ['status=DONE', 'status=PENDING', 'taskType=NOT_A_TYPE', 'status=QUEUED&taskType=bogus']) {
+      const res = await request(app)
+        .get(`/api/v1/workspaces/${workspaceId}/tasks?${query}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    }
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it('GET /workspaces/:id/tasks passes valid filters, including types no longer submittable', async () => {
+    mockMembership();
+    const findMany = vi.spyOn(prisma.task, 'findMany').mockResolvedValue([]);
+    const res = await request(app)
+      .get(`/api/v1/workspaces/${workspaceId}/tasks?status=NEEDS_ATTENTION&taskType=BUG_INVESTIGATION`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ tasks: [], total: 0 });
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { workspaceId, status: 'NEEDS_ATTENTION', taskType: 'BUG_INVESTIGATION' },
+    }));
+  });
+
   it('GET /workspaces/:id/tasks/:taskId does not invent executionMetadata when none is stored', async () => {
     mockMembership();
     vi.spyOn(prisma.task, 'findFirst').mockResolvedValue({
@@ -287,6 +354,30 @@ describe('API Validation and Task Routes', () => {
     expect(res.status).toBe(200);
     expect(res.body).not.toHaveProperty('executionMetadata');
     expect(JSON.stringify(res.body)).not.toMatch(/sandboxType|worker-bullmq-01/);
+  });
+
+  it('redacts persisted task execution evidence before returning task and patch API responses', async () => {
+    const secret = 'ASEA_API_RESPONSE_SYNTHETIC_SECRET_62be17aa';
+    vi.stubEnv('ASEA_API_TEST_SECRET', secret);
+    mockMembership();
+    vi.spyOn(prisma.taskPatch, 'findFirst').mockResolvedValue({
+      id: 'patch-1', taskId: 'task-2', workflowRunId: 'run-2', snapshotHash: 'a'.repeat(64), patchHash: 'b'.repeat(64),
+      summary: 'fixture', plan: [], evidence: [], contextFiles: [], changedFiles: [], unifiedDiff: `+const token = '${secret}';`,
+      testStatus: 'FAILED', testResults: { status: 'FAILED', commands: [{ stdout: `printed ${secret}`, stderr: `API_TOKEN=${secret}` }] },
+      securityStatus: 'FAILED', securityResults: { tools: [{ findings: [{ message: `scanner: ${secret}` }] }] },
+      reviewStatus: 'UNAVAILABLE', reviewResults: { summary: `review error: ${secret}` }, sandboxDiagnostics: { message: `diagnostic: ${secret}` },
+      workspaceCleanupStatus: 'CLEANED', status: 'PROPOSED', publicationStatus: 'NOT_PUBLISHED', publicationError: null,
+      publishedBranch: null, githubCommitSha: null, pullRequestNumber: null, pullRequestUrl: null, publishedAt: null,
+      ciStatus: 'NOT_RUN', ciChecks: [], ciDiagnosis: null, ciSyncedAt: null, createdAt: new Date(), updatedAt: new Date(),
+    } as any);
+
+    const res = await request(app)
+      .get(`/api/v1/workspaces/${workspaceId}/tasks/task-2/patch`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(JSON.stringify(res.body)).not.toContain(secret);
+    expect(JSON.stringify(res.body)).toContain('[REDACTED]');
   });
 
   it('POST /workspaces/:id/tasks rejects unauthenticated requests with 401', async () => {

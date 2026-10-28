@@ -85,7 +85,7 @@ describe('Task worker retries (B3), per-attempt runs and cancellation (B4)', () 
     vi.restoreAllMocks();
   });
 
-  it('keeps the task RUNNING after a failed non-final attempt, and the retry completes it', async () => {
+  it('keeps the task RUNNING after a failed non-final attempt, then reports the unavailable workflow', async () => {
     await expect(processTaskJob(makeJob(0, { simulatedFailure: true }))).rejects.toThrow(
       'Simulated worker fault'
     );
@@ -96,25 +96,22 @@ describe('Task worker retries (B3), per-attempt runs and cancellation (B4)', () 
     expect(runRow.errorSummary).toBe('Simulated worker fault for test verification');
     expect(audits).toHaveLength(0);
 
-    // BullMQ retries with the same job data; this time the work succeeds
+    // BullMQ retries the failed attempt; unsupported work is reported honestly.
     await processTaskJob(makeJob(1));
 
     const retryRun = [...runs.values()].find((r) => r.attemptNumber === 2)!;
     expect(runs.size).toBe(2);
     expect(retryRun.status).toBe('COMPLETED');
     expect(runRow.status).toBe('FAILED');
-    expect(taskRow.status).toBe('COMPLETED');
-    expect(audits.map((a) => a.eventType)).toEqual(['TASK_COMPLETED']);
+    expect(taskRow.status).toBe('NEEDS_ATTENTION');
+    expect(taskRow.failureCode).toBe('WORKFLOW_UNAVAILABLE');
+    expect(audits.map((a) => a.eventType)).toEqual(['TASK_NEEDS_ATTENTION']);
 
     // Steps attach to their own attempt's run
     const stepsByRun = (id: string) => steps.filter((s) => s.workflowRunId === id).map((s) => s.stepType);
     expect(stepsByRun(runId)).toEqual(['VALIDATE_CONTEXT']);
-    expect(stepsByRun(retryRun.id)).toEqual([
-      'VALIDATE_CONTEXT',
-      'INSPECT_REPOSITORY',
-      'GENERATE_SPEC',
-      'VERIFY_BOUNDARIES',
-    ]);
+    expect(stepsByRun(retryRun.id)).toEqual(['VALIDATE_CONTEXT', 'GENERATE_SPEC']);
+    expect(steps.find((s) => s.workflowRunId === retryRun.id && s.stepType === 'GENERATE_SPEC')?.stepStatus).toBe('SKIPPED');
   });
 
   it('reuses the attempt run when a stalled job is re-run without a new attempt number', async () => {
@@ -129,14 +126,27 @@ describe('Task worker retries (B3), per-attempt runs and cancellation (B4)', () 
     expect(steps.every((s) => s.workflowRunId === 'run-w-2')).toBe(true);
   });
 
-  it('records the real worker identity and no fabricated verification results', async () => {
+  it('records the worker identity and leaves unsupported work unavailable instead of claiming completion', async () => {
     await processTaskJob(makeJob(0));
 
     expect(runRow.workerId).toBe(`${os.hostname()}:${process.pid}`);
     const metadata = JSON.stringify(steps.map((s) => s.resultMetadata));
-    expect(metadata).not.toMatch(/auditPass|verified_safe|worker-bullmq-01/);
-    const boundaries = steps.find((s) => s.stepType === 'VERIFY_BOUNDARIES');
-    expect(boundaries?.resultMetadata.note).toMatch(/no boundary verification is implemented/);
+    expect(metadata).toMatch(/UNAVAILABLE/);
+    expect(metadata).toMatch(/NOT_GENERATED/);
+    expect(taskRow.status).toBe('NEEDS_ATTENTION');
+    expect(audits[0].eventType).toBe('TASK_NEEDS_ATTENTION');
+  });
+
+  it('does not reopen a task whose committed patch result is redelivered after the worker acknowledgement gap', async () => {
+    taskRow.status = 'NEEDS_ATTENTION';
+
+    await processTaskJob(makeJob(0));
+
+    expect(steps).toHaveLength(0);
+    expect(audits).toHaveLength(0);
+    expect(prisma.workflowRun.update).not.toHaveBeenCalled();
+    expect(taskRow.status).toBe('NEEDS_ATTENTION');
+    expect(runRow.status).toBe('QUEUED');
   });
 
   it('marks the task FAILED only on the final attempt, in a run for that attempt', async () => {
@@ -172,12 +182,12 @@ describe('Task worker retries (B3), per-attempt runs and cancellation (B4)', () 
 
   it('cancels instead of completing when cancellation arrives during the last step', async () => {
     onStepCreated = (stepType) => {
-      if (stepType === 'VERIFY_BOUNDARIES') taskRow.status = 'CANCEL_REQUESTED';
+      if (stepType === 'GENERATE_SPEC') taskRow.status = 'CANCEL_REQUESTED';
     };
 
     await processTaskJob(makeJob(0));
 
-    expect(steps).toHaveLength(4);
+    expect(steps).toHaveLength(2);
     expect(taskRow.status).toBe('CANCELLED');
     expect(runRow.status).toBe('CANCELLED');
     expect(audits).toHaveLength(0);
@@ -210,5 +220,16 @@ describe('Task worker retries (B3), per-attempt runs and cancellation (B4)', () 
     expect(prisma.workflowRun.create).not.toHaveBeenCalled();
     expect(taskRow.status).toBe('CANCELLED');
     expect(runRow.status).toBe('FAILED'); // the earlier attempt's outcome is kept
+  });
+
+  it('does not report a CODE_PATCH task as complete before a patch provider and sandbox are configured', async () => {
+    taskRow.taskType = 'CODE_PATCH';
+    await processTaskJob(makeJob(0));
+
+    expect(taskRow.status).toBe('NEEDS_ATTENTION');
+    expect(taskRow.failureCode).toBe('WORKFLOW_UNAVAILABLE');
+    expect(runRow.status).toBe('COMPLETED');
+    expect(JSON.stringify(steps)).not.toMatch(/unified_diff|patchHash|passed/);
+    expect(audits[0].eventType).toBe('TASK_NEEDS_ATTENTION');
   });
 });

@@ -19,6 +19,11 @@ enum WorkspaceRole {
   MEMBER
 }
 
+enum WorkspaceInvitationRole {
+  ADMIN
+  MEMBER
+}
+
 enum RepositoryProvider {
   LOCAL
   GITHUB
@@ -108,9 +113,14 @@ enum WorkflowStepType {
   VALIDATE_CONTEXT
   INSPECT_REPOSITORY
   GENERATE_SPEC
+  GENERATE_PATCH
+  APPLY_PATCH
   VERIFY_BOUNDARIES
   SIMULATE_EXECUTION
+  EXECUTE_TESTS
+  REQUEST_APPROVAL
   STATIC_ANALYSIS
+  INDEPENDENT_REVIEW
   INDEX_REPOSITORY
   VERIFICATION_PIPELINE
 }
@@ -127,6 +137,28 @@ enum ApprovalStatus {
   PENDING
   APPROVED
   REJECTED
+}
+
+enum TaskPatchStatus {
+  PROPOSED
+  APPROVED
+  REJECTED
+  INVALIDATED
+}
+
+enum PatchPublicationStatus {
+  NOT_PUBLISHED
+  PUBLISHING
+  PR_OPEN
+  FAILED
+}
+
+enum PatchCiStatus {
+  NOT_CONFIGURED
+  PENDING
+  SUCCESS
+  FAILURE
+  ERROR
 }
 
 enum OutboxStatus {
@@ -156,6 +188,8 @@ model User {
   tasks              Task[]                @relation("TaskCreator")
   approvalsRequested Approval[]            @relation("ApprovalRequester")
   approvalsDecided   Approval[]            @relation("ApprovalDecider")
+  createdInvitations WorkspaceInvitation[]  @relation("WorkspaceInvitationCreator")
+  passwordResetTokens PasswordResetToken[]
 
   @@index([email])
 }
@@ -175,6 +209,8 @@ model Workspace {
   analyses    RepositoryAnalysis[]
   verificationRuns VerificationRun[]
   policyProfiles PolicyProfile[]
+  githubAppInstallations GithubAppInstallation[]
+  invitations WorkspaceInvitation[]
 
   @@index([ownerId])
 }
@@ -194,6 +230,39 @@ model WorkspaceMembership {
   @@index([workspaceId])
 }
 
+model WorkspaceInvitation {
+  id          String        @id @default(uuid())
+  workspaceId String
+  email       String
+  role        WorkspaceInvitationRole @default(MEMBER)
+  tokenHash   String        @unique
+  createdById String?
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy User?      @relation("WorkspaceInvitationCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, email, createdAt])
+  @@index([workspaceId, expiresAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
 model Repository {
   id               String               @id @default(uuid())
   workspaceId      String
@@ -207,6 +276,7 @@ model Repository {
   // deliveries with (see routes/webhooks.ts)
   githubFullName      String?
   githubWebhookSecret String?
+  githubAppInstallationId String?
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt
 
@@ -214,9 +284,30 @@ model Repository {
   tasks            Task[]
   analyses         RepositoryAnalysis[]
   verificationRuns VerificationRun[]
+  githubAppInstallation GithubAppInstallation? @relation(fields: [githubAppInstallationId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId])
   @@index([githubFullName])
+  @@index([githubAppInstallationId])
+}
+
+// One GitHub App installation can be connected to a workspace after the
+// installation callback is verified against GitHub using the App JWT.
+model GithubAppInstallation {
+  id             String   @id @default(uuid())
+  workspaceId    String
+  installationId String
+  accountLogin   String
+  accountType    String
+  createdById    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  workspace      Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  repositories   Repository[]
+
+  @@unique([workspaceId, installationId])
+  @@index([workspaceId])
 }
 
 model Task {
@@ -246,6 +337,7 @@ model Task {
   runs              WorkflowRun[]
   verificationRuns  VerificationRun[]
   approvals         Approval[]
+  patches           TaskPatch[]
 
   @@unique([workspaceId, idempotencyKey])
   @@index([workspaceId])
@@ -268,6 +360,7 @@ model WorkflowRun {
 
   task           Task              @relation(fields: [taskId], references: [id], onDelete: Cascade)
   steps          WorkflowStep[]
+  patches        TaskPatch[]
 
   @@index([taskId])
   @@index([status])
@@ -297,6 +390,8 @@ model Approval {
   id             String         @id @default(uuid())
   taskId         String
   workflowStepId String?
+  // Binds a decision to the exact proposed patch; legacy approvals may be null.
+  patchHash      String?
   status         ApprovalStatus @default(PENDING)
   requestedById  String
   decidedById    String?
@@ -309,6 +404,55 @@ model Approval {
   requester      User           @relation("ApprovalRequester", fields: [requestedById], references: [id], onDelete: Cascade)
   decider        User?          @relation("ApprovalDecider", fields: [decidedById], references: [id], onDelete: SetNull)
 
+  @@unique([taskId, patchHash])
+  @@index([taskId])
+  @@index([status])
+}
+
+// A reviewable patch artifact is bound to the task's isolated source snapshot.
+// The task workspace itself is disposable and its path is intentionally not persisted.
+model TaskPatch {
+  id                     String          @id @default(uuid())
+  taskId                 String
+  workflowRunId          String
+  snapshotHash           String
+  sourceRevision         String?
+  patchHash              String
+  summary                String
+  plan                   Json
+  evidence               Json?
+  contextFiles           Json
+  changedFiles           Json
+  baseFiles              Json              @default("[]")
+  unifiedDiff            String          @db.Text
+  testStatus             String          @default("NOT_RUN")
+  securityStatus         String          @default("NOT_RUN")
+  reviewStatus           String          @default("UNAVAILABLE")
+  testResults            Json?
+  securityResults        Json?
+  reviewResults          Json?
+  sandboxDiagnostics     Json?
+  workspaceCleanupStatus String          @default("CLEANED")
+  status                 TaskPatchStatus @default(PROPOSED)
+  publicationStatus      PatchPublicationStatus @default(NOT_PUBLISHED)
+  publicationError       String?
+  publishedBranch        String?
+  githubCommitSha        String?
+  pullRequestNumber      Int?
+  pullRequestUrl         String?
+  publishedAt            DateTime?
+  ciStatus               PatchCiStatus @default(NOT_CONFIGURED)
+  ciChecks               Json?
+  ciDiagnosis            Json?
+  ciSyncedAt             DateTime?
+  createdAt              DateTime        @default(now())
+  updatedAt              DateTime        @updatedAt
+
+  task                   Task            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  workflowRun            WorkflowRun     @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, patchHash])
+  @@unique([workflowRunId])
   @@index([taskId])
   @@index([status])
 }

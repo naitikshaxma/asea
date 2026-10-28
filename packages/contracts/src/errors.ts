@@ -12,6 +12,7 @@ export const ErrorCodeEnum = z.enum([
   'CONFLICT',
   'DEPENDENCY_FAILURE',
   'TIMEOUT',
+  'RATE_LIMITED',
 ]);
 
 export type ErrorCode = z.infer<typeof ErrorCodeEnum>;

@@ -4,10 +4,18 @@ import type { UserProfile } from '@autonomous-engineer/contracts';
 import { prisma } from './prisma.js';
 import { config } from '../config.js';
 import { AppError } from '../middlewares/errorHandler.js';
+import { authStateStore } from './authStateStore.js';
+import { randomUUID } from 'node:crypto';
+
+// Keep the unknown-email path close to the known-email path by doing one
+// bcrypt comparison either way. This value contains no credential and is
+// generated once at process start with the same work factor as user hashes.
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync('invalid-login-timing-guard', 10);
 
 export interface TokenPayload {
   userId: string;
   email: string;
+  jti?: string;
 }
 
 export async function hashPassword(password: string): Promise<string> {
@@ -23,6 +31,32 @@ export function generateToken(payload: TokenPayload): string {
   return jwt.sign(payload, config.JWT_SECRET, {
     expiresIn: config.JWT_EXPIRES_IN as any,
   });
+}
+
+/** Sign and register a session with the shared auth-state store before returning it. */
+export async function generateSessionToken(payload: Omit<TokenPayload, 'jti'>): Promise<string> {
+  const sessionId = randomUUID();
+  const token = jwt.sign({ ...payload, jti: sessionId }, config.JWT_SECRET, {
+    expiresIn: config.JWT_EXPIRES_IN as any,
+  });
+  const decoded = jwt.decode(token);
+  const expiresAt = decoded && typeof decoded === 'object' ? decoded.exp : undefined;
+  if (typeof expiresAt !== 'number') {
+    throw new AppError(500, 'INTERNAL_SERVER_ERROR', 'Authentication token expiry is invalid');
+  }
+
+  try {
+    await authStateStore.createSession(sessionId, payload.userId, expiresAt * 1000 - Date.now());
+  } catch {
+    throw new AppError(503, 'SERVICE_UNAVAILABLE', 'Session storage is temporarily unavailable');
+  }
+  return token;
+}
+
+export function tokenTtlMs(token: string): number {
+  const decoded = jwt.decode(token);
+  const expiresAt = decoded && typeof decoded === 'object' ? decoded.exp : undefined;
+  return typeof expiresAt === 'number' ? Math.max(0, expiresAt * 1000 - Date.now()) : 0;
 }
 
 export function verifyToken(token: string): TokenPayload {
@@ -96,7 +130,7 @@ export async function registerUser(input: {
   });
 
   const profile = toUserProfile(result);
-  const token = generateToken({ userId: profile.id, email: profile.email });
+  const token = await generateSessionToken({ userId: profile.id, email: profile.email });
 
   return { user: profile, token };
 }
@@ -112,12 +146,8 @@ export async function loginUser(input: {
   });
 
   // Generic failure message to prevent email enumeration
-  if (!user) {
-    throw new AppError(401, 'UNAUTHORIZED', 'Invalid email or password');
-  }
-
-  const valid = await verifyPassword(input.password, user.passwordHash);
-  if (!valid) {
+  const valid = await verifyPassword(input.password, user?.passwordHash ?? DUMMY_PASSWORD_HASH);
+  if (!user || !valid) {
     throw new AppError(401, 'UNAUTHORIZED', 'Invalid email or password');
   }
 
@@ -126,7 +156,7 @@ export async function loginUser(input: {
   }
 
   const profile = toUserProfile(user);
-  const token = generateToken({ userId: profile.id, email: profile.email });
+  const token = await generateSessionToken({ userId: profile.id, email: profile.email });
 
   return { user: profile, token };
 }
