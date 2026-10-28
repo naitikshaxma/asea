@@ -213,7 +213,7 @@ No endpoint in either service requires a webhook signature, because no webhook e
 | `GET …/analysis` ([README.md:175](README.md#L175), [docs/development.md:151](docs/development.md#L151)) | `GET …/analysis/latest` ([intelligence.ts:48](services/api/src/routes/intelligence.ts#L48)) |
 | Rate limiting ([docs/security.md:89](docs/security.md#L89)) | None |
 | Sandbox, cgroups, syscall audit ([ExecutionPanel.tsx:5-48](apps/web/src/components/ExecutionPanel.tsx#L5-L48), [workers/execution-worker/README.md](workers/execution-worker/README.md)) | No code exists |
-| Doc links ([README.md:210-213](README.md#L210-L213)) | Absolute `file:///c:/Users/sharm/...` paths that break for anyone else |
+| Doc links ([README.md:210-213](README.md#L210-L213)) | Absolute `file:///c:/Users/<user>/...` paths that break for anyone else |
 
 ---
 

@@ -60,7 +60,7 @@ This snapshot records the repository before application-code changes in this aud
 
 ## Environment and baseline checks
 
-- Project root: `C:\Users\sharm\OneDrive\Desktop\miniprject`
+- Project root: the repository root (`./`), checked out locally on Windows
 - OS/shell: Windows, PowerShell 7.6.5
 - Runtime: Node.js 24.12.0, npm 11.7.0, Python 3.12.10
 - Stack: npm workspaces; React/Vite/TypeScript; Express/TypeScript; Prisma/PostgreSQL; Redis/BullMQ; FastAPI/Python; Docker Compose
@@ -395,3 +395,9 @@ Existing staged, unstaged, and untracked changes were preserved; nothing was sta
 - Live sandbox suite, `npm run typecheck`, `npm run build`, `prisma validate`, API/frontend/Python suites, and the final E2E are recorded below.
 - **Final runs:** live sandbox suite **11/11**, with no `io.asea.sandbox` container left. `npm run e2e` (project `claude-final-20261029`, ports 18681/18699): API **14/14** and UI **4/4**, and the scoped teardown removed all of that project's containers, volumes, and network. `npm run test:api` **317 passed** (11 live cases skipped without the image), frontend **8/8**, Python **167/167**. `npm run typecheck`, `npm run build`, `prisma validate`, and `git diff --check` passed. The live script's migration drift step was added after its 16/16 run and has not been run yet.
 - **Not verified:** all live GitHub operations (App, installation, repository access, branch/commit/PR, live webhooks, CI). There is no Git remote, `gh` is unauthenticated, and no public URL exists for the App webhook/callback. Mock-based GitHub tests pass.
+
+## Post-publication verification — 2026-10-29
+
+- **CI:** the first GitHub Actions run on the published `main` (commit `9456974`, [run 40750736177](https://github.com/naitikshaxma/asea/actions/runs/40750736177)) completed `success` on all four jobs: TypeScript/API/web, Python agent service, Prisma migrations with a drift check, and Compose validation.
+- **Live run with the schema-drift check:** `npm run live:code-patch` passed **17/17**. The new drift check (`prisma migrate diff` against the run's own migrated tmpfs PostgreSQL, `--exit-code`) passed. The run's containers and directory were removed afterwards.
+- **GitHub App: not verified live, blocked.** No App credentials are configured (no `.env`, no `GITHUB_APP_*` variables), the repository has no webhooks, and there is no public HTTPS endpoint for the App's webhook and OAuth callback. The CLI's OAuth token cannot list App installations, so whether an App already exists under the account must be checked at github.com/settings/apps. No App, installation, branch, or PR was created. Installation access, repository association, publication, webhook signatures, duplicate deliveries, and CI-status sync remain covered only by the mocked API tests and the E2E GitHub mock.
